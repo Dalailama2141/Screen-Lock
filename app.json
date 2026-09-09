@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Screen Guard",
+    "slug": "screen-guard",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "assetBundlePatterns": ["**/*"],
+    "android": {
+      "package": "com.screenguard"
+    },
+    "plugins": ["./plugins/withInstalledApps"]
+  }
+}

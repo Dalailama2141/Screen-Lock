@@ -1,0 +1,29 @@
+{
+  "name": "screen-guard",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "backend": "node backend/server.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.1.2",
+    "cors": "^2.8.5",
+    "expo": "~53.0.0",
+    "expo-local-authentication": "~16.0.5",
+    "expo-status-bar": "~2.2.3",
+    "express": "^4.21.2",
+    "mongoose": "^8.9.5",
+    "react": "19.0.0",
+    "react-native": "^0.79.6"
+  },
+  "devDependencies": {
+    "@types/react": "~19.0.10",
+    "typescript": "~5.8.3"
+  }
+}

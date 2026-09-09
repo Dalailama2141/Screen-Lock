@@ -1,0 +1,10 @@
+node_modules
+.expo
+.git
+.gitignore
+android
+ios
+src
+assets
+README.md
+npm-debug.log*
