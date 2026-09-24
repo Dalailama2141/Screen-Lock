@@ -5,10 +5,16 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "assetBundlePatterns": ["**/*"],
+    "entryPoint": "./index.js",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "android": {
       "package": "com.screenguard"
     },
-    "plugins": ["./plugins/withInstalledApps"]
+    "plugins": [
+      "./plugins/withInstalledApps",
+      "expo-asset"
+    ]
   }
 }
