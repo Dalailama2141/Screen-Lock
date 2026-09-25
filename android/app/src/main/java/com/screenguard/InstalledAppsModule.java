@@ -44,18 +44,23 @@ public class InstalledAppsModule extends ReactContextBaseJavaModule {
             for (ApplicationInfo applicationInfo : applications) {
                 String packageName = applicationInfo.packageName;
                 if (packageName.equals(getReactApplicationContext().getPackageName())) continue;
-
-                boolean isSystemApp = (applicationInfo.flags & ApplicationInfo.FLAG_SYSTEM) != 0;
-                boolean isUpdatedSystemApp = (applicationInfo.flags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0;
-                if (isSystemApp && !isUpdatedSystemApp) continue;
-
                 Intent launchIntent = packageManager.getLaunchIntentForPackage(packageName);
                 if (launchIntent == null) continue;
 
+                String appName = packageManager.getApplicationLabel(applicationInfo) != null
+                        ? packageManager.getApplicationLabel(applicationInfo).toString()
+                        : packageName;
+
                 WritableMap app = Arguments.createMap();
-                app.putString("name", packageManager.getApplicationLabel(applicationInfo).toString());
+                app.putString("name", appName);
                 app.putString("packageName", packageName);
-                app.putString("icon", getIconDataUri(applicationInfo.loadIcon(packageManager)));
+
+                Drawable icon = applicationInfo.loadIcon(packageManager);
+                if (icon != null) {
+                    app.putString("icon", getIconDataUri(icon));
+                } else {
+                    app.putString("icon", "");
+                }
                 result.pushMap(app);
             }
 

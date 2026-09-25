@@ -112,6 +112,16 @@ app.put('/lock-credentials/:deviceId', async (req, res) => {
   }
 });
 
+app.delete('/lock-credentials/:deviceId', async (req, res) => {
+  try {
+    const result = await LockCredential.deleteOne({ deviceId: req.params.deviceId });
+    res.json({ deleted: result.deletedCount === 1 });
+  } catch (error) {
+    console.error('Error deleting lock credential', error);
+    res.status(503).json({ error: 'Database unavailable' });
+  }
+});
+
 app.post('/lock-credentials/:deviceId/verify', async (req, res) => {
   const { credential } = req.body;
   if (typeof credential !== 'string' || !credential) return res.status(400).json({ error: 'credential is required' });
@@ -136,7 +146,7 @@ async function startServer() {
       console.log(`Backend listening on http://localhost:${port}`);
     });
 
-    const shutdown = async (signal: string) => {
+    const shutdown = async (signal) => {
       console.log(`${signal} received, starting graceful shutdown...`);
       server.close(async () => {
         console.log('HTTP server closed');

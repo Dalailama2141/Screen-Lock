@@ -1,26 +1,52 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Image, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Image, PanResponder, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { getInstalledApps, launchInstalledApp } from '../../services/native/installedApps';
-import { getLockSettings, saveLockCredential, verifyLockCredential } from '../../services/api';
+import { deleteLockCredential, getLockSettings, saveLockCredential, verifyLockCredential } from '../../services/api';
 import type { LockMethod } from '../../types';
+import { screenGuardColors } from '../../theme';
 
-type Tab = 'Home' | 'Apps' | 'Activity';
+type Tab = 'Home' | 'Activity' | 'Settings';
 type SetupStep = 'choose' | 'validate';
 type AppItem = { name: string; packageName: string; icon: string; color: string; mark: string; locked: boolean };
 
-const colors = { bg: '#020b1b', panel: '#081525', border: '#203149', text: '#f5f7fb', muted: '#aeb7c9', teal: '#26e4d5', danger: '#ff5261' };
 const lockMethods: LockMethod[] = ['Fingerprint', 'Pattern', 'PIN'];
 const appColors = ['#25d366', '#d6249f', '#4267e8', '#159b9b', '#f5c342', '#2aabee'];
 const CREDENTIAL_METHOD_KEY = '@screen-guard/method';
 const CREDENTIAL_VALUE_KEY = '@screen-guard/credential';
 const DEVICE_ID_KEY = '@screen-guard/device-id';
+const SETUP_COMPLETE_KEY = '@screen-guard/setup-complete';
 
-function BottomNav({ tab, onChange }: { tab: Tab; onChange: (value: Tab) => void }) {
+type ThemePalette = { readonly bg: string; readonly panel: string; readonly border: string; readonly text: string; readonly muted: string; readonly teal: string; readonly danger: string };
+type WallpaperPalette = { readonly bg: string; readonly accent: string; readonly glow: string };
+
+const themePalettes = {
+  Dark: { bg: '#020b1b', panel: '#081525', border: '#203149', text: '#f5f7fb', muted: '#aeb7c9', teal: '#26e4d5', danger: '#ff5261' },
+  Light: { bg: '#ffffff', panel: '#f8fbff', border: '#d7e5f8', text: '#12233a', muted: '#5f728d', teal: '#0a918f', danger: '#d93666' },
+  System: { bg: '#0f172a', panel: '#182538', border: '#2b3d57', text: '#edf7ff', muted: '#b5c3d7', teal: '#5fe5d1', danger: '#ff6b81' },
+} as const satisfies Record<string, ThemePalette>;
+
+const wallpaperPalettes = {
+  'Night Glow': { bg: '#020b1b', accent: '#26e4d5', glow: 'rgba(38, 228, 213, 0.12)' },
+  Ocean: { bg: '#071b2a', accent: '#5cc8ff', glow: 'rgba(92, 200, 255, 0.12)' },
+  Minimal: { bg: '#111827', accent: '#c4b5fd', glow: 'rgba(196, 181, 253, 0.12)' },
+} as const satisfies Record<string, WallpaperPalette>;
+
+const PATTERN_SIZE = 270;
+const PATTERN_DOT_SIZE = 58;
+const PATTERN_DOT_INSET = 16;
+const PATTERN_DOT_STEP = 90;
+const PATTERN_POINT_RADIUS = 38;
+const PATTERN_POINTS = Array.from({ length: 9 }, (_, index) => ({
+  x: PATTERN_DOT_INSET + (index % 3) * PATTERN_DOT_STEP + PATTERN_DOT_SIZE / 2,
+  y: PATTERN_DOT_INSET + Math.floor(index / 3) * PATTERN_DOT_STEP + PATTERN_DOT_SIZE / 2,
+}));
+
+function BottomNav({ tab, onChange, themeColors }: { tab: Tab; onChange: (value: Tab) => void; themeColors: ThemePalette }) {
   return (
-    <View style={styles.bottom}>
-      {(['Home', 'Apps', 'Activity'] as Tab[]).map((item) => (
+    <View style={[styles.bottom, { backgroundColor: themeColors.bg, borderTopColor: themeColors.border }]}>
+      {(['Home', 'Activity', 'Settings'] as Tab[]).map((item) => (
         <Pressable
           key={item}
           accessibilityRole="button"
@@ -28,8 +54,8 @@ function BottomNav({ tab, onChange }: { tab: Tab; onChange: (value: Tab) => void
           hitSlop={10}
           onPress={() => onChange(item)}
         >
-          <Text style={[styles.navIcon, tab === item && styles.tealText]}>{item === 'Home' ? '⌂' : item === 'Apps' ? '▦' : '♢'}</Text>
-          <Text style={[styles.navLabel, tab === item && styles.tealText]}>{item}</Text>
+          <Text style={[styles.navIcon, { color: themeColors.muted }, tab === item && { color: themeColors.teal }]}>{item === 'Home' ? '⌂' : item === 'Activity' ? '♢' : '⚙'}</Text>
+          <Text style={[styles.navLabel, { color: themeColors.muted }, tab === item && { color: themeColors.teal }]}>{item}</Text>
         </Pressable>
       ))}
     </View>
@@ -51,6 +77,13 @@ export function Navigation() {
   const [search, setSearch] = useState('');
   const [lockedApp, setLockedApp] = useState<AppItem | null>(null);
   const [loadingApps, setLoadingApps] = useState(true);
+  const [theme, setTheme] = useState<'Dark' | 'Light' | 'System'>('Dark');
+  const [wallpaper, setWallpaper] = useState<'Night Glow' | 'Ocean' | 'Minimal'>('Night Glow');
+  const [resettingPassword, setResettingPassword] = useState(false);
+  const themeColors = themePalettes[theme];
+  const wallpaperColors = wallpaperPalettes[wallpaper];
+  const appBackgroundColor = theme === 'Light' ? '#ffffff' : wallpaperColors.bg;
+  const appContentColor = theme === 'Light' ? '#ffffff' : wallpaperColors.glow;
   const lockedCount = apps.filter((app) => app.locked).length;
   const visibleApps = useMemo(() => apps.filter((app) => app.name.toLowerCase().includes(search.toLowerCase())), [apps, search]);
   const toggleApp = (packageName: string) => setApps((current) => current.map((app) => app.packageName === packageName ? { ...app, locked: !app.locked } : app));
@@ -73,14 +106,14 @@ export function Navigation() {
           setMethod(remoteSettings.method);
           setSetupComplete(true);
         } else {
-          const localSetupComplete = await AsyncStorage.getItem('@screen-guard/setup-complete');
+          const localSetupComplete = await AsyncStorage.getItem(SETUP_COMPLETE_KEY);
           if (localSetupComplete === 'true') {
             setSetupComplete(true);
           }
         }
       } catch (error) {
         console.error('Unable to load lock settings from backend', error);
-        const localSetupComplete = await AsyncStorage.getItem('@screen-guard/setup-complete');
+        const localSetupComplete = await AsyncStorage.getItem(SETUP_COMPLETE_KEY);
         if (localSetupComplete === 'true') {
           setSetupComplete(true);
         }
@@ -91,7 +124,9 @@ export function Navigation() {
     let active = true;
     getInstalledApps()
       .then((installedApps) => {
-        if (active) setApps(installedApps.map(toAppItem));
+        if (active) {
+          setApps(installedApps.map(toAppItem));
+        }
       })
       .catch((error) => console.error('Unable to load installed apps', error))
       .finally(() => {
@@ -108,10 +143,42 @@ export function Navigation() {
     await saveLockCredential(deviceId, method, value);
     await AsyncStorage.setItem(CREDENTIAL_METHOD_KEY, method);
     await AsyncStorage.setItem(CREDENTIAL_VALUE_KEY, value);
-    await AsyncStorage.setItem('@screen-guard/setup-complete', 'true');
+    await AsyncStorage.setItem(SETUP_COMPLETE_KEY, 'true');
     setCredential(value);
     setSetupComplete(true);
     setSetupStep('choose');
+  };
+
+  const resetPassword = async () => {
+    if (!deviceId || resettingPassword) return;
+
+    setResettingPassword(true);
+    try {
+      await deleteLockCredential(deviceId);
+      await AsyncStorage.multiRemove([CREDENTIAL_METHOD_KEY, CREDENTIAL_VALUE_KEY, SETUP_COMPLETE_KEY]);
+      setCredential('');
+      setMethod('Fingerprint');
+      setSetupStep('choose');
+      setSetupComplete(false);
+      setLockedApp(null);
+      setTab('Home');
+      Alert.alert('Password removed', 'Choose Fingerprint, Pattern, or PIN to set a new lock.');
+    } catch (error) {
+      Alert.alert('Unable to reset password', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setResettingPassword(false);
+    }
+  };
+
+  const confirmPasswordReset = () => {
+    Alert.alert(
+      'Reset password?',
+      'This removes the current lock from this device and returns to the lock-type selection screen.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Reset', style: 'destructive', onPress: () => { void resetPassword(); } },
+      ],
+    );
   };
 
   const changeTab = (nextTab: Tab) => {
@@ -121,47 +188,241 @@ export function Navigation() {
 
   const renderSetupFlow = () => (
     setupStep === 'choose'
-      ? <SetupScreen method={method} setMethod={setMethod} onContinue={() => setSetupStep('validate')} />
-      : <CredentialSetupScreen method={method} onComplete={finishSetup} onBack={() => setSetupStep('choose')} />
+      ? <SetupScreen method={method} setMethod={setMethod} themeColors={themeColors} onContinue={() => setSetupStep('validate')} />
+      : <CredentialSetupScreen method={method} themeColors={themeColors} onComplete={finishSetup} onBack={() => setSetupStep('choose')} />
   );
 
   const renderMainContent = () => {
     switch (tab) {
-      case 'Apps':
-        return <AppsScreen apps={visibleApps} lockedCount={lockedCount} loading={loadingApps} search={search} setSearch={setSearch} onToggle={toggleApp} onOpen={setLockedApp} />;
       case 'Activity':
-        return <ActivityScreen apps={apps} />;
+        return <ActivityScreen apps={apps} themeColors={themeColors} />;
+      case 'Settings':
+        return <SettingsScreen method={method} theme={theme} setTheme={setTheme} wallpaper={wallpaper} setWallpaper={setWallpaper} themeColors={themeColors} backgroundColor={appBackgroundColor} resettingPassword={resettingPassword} onResetPassword={confirmPasswordReset} onBack={() => setTab('Home')} />;
       case 'Home':
       default:
-        return <HomeScreen lockedCount={lockedCount} onApps={() => changeTab('Apps')} />;
+        return <AppsScreen apps={visibleApps} totalCount={apps.length} lockedCount={lockedCount} loading={loadingApps} search={search} setSearch={setSearch} themeColors={themeColors} onToggle={toggleApp} onOpen={setLockedApp} />;
     }
   };
 
-  if (lockedApp) return <LockScreen app={lockedApp} method={method} credential={credential} deviceId={deviceId} setMethod={setMethod} onUnlock={async () => { try { await launchInstalledApp(lockedApp.packageName); } catch (error) { Alert.alert('Unable to open app', error instanceof Error ? error.message : 'The selected app could not be opened.'); } finally { setLockedApp(null); } }} onClose={() => setLockedApp(null)} />;
+  if (lockedApp) return <LockScreen app={lockedApp} method={method} credential={credential} deviceId={deviceId} themeColors={themeColors} setMethod={setMethod} onUnlock={async () => { try { await launchInstalledApp(lockedApp.packageName); } catch (error) { Alert.alert('Unable to open app', error instanceof Error ? error.message : 'The selected app could not be opened.'); } finally { setLockedApp(null); } }} onClose={() => setLockedApp(null)} />;
 
-  return <SafeAreaView style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={colors.bg} />
-    {setupComplete ? <>
-      {renderMainContent()}
-      <BottomNav tab={tab} onChange={changeTab} />
-    </> : <>
-      {renderSetupFlow()}
-      <BottomNav tab="Home" onChange={changeTab} />
-    </>}
+  return <SafeAreaView style={[styles.safe, { backgroundColor: appBackgroundColor }]}><StatusBar barStyle={theme === 'Light' ? 'dark-content' : 'light-content'} backgroundColor={appBackgroundColor} />
+    <View style={{ flex: 1, backgroundColor: appContentColor }}>
+      {setupComplete ? <>
+        {renderMainContent()}
+        <BottomNav tab={tab} onChange={changeTab} themeColors={themeColors} />
+      </> : <>
+        {tab === 'Home' ? renderSetupFlow() : renderMainContent()}
+        <BottomNav tab={tab} onChange={changeTab} themeColors={themeColors} />
+      </>}
+    </View>
   </SafeAreaView>;
 }
 
-function SetupScreen({ method, setMethod, onContinue }: { method: LockMethod; setMethod: (value: LockMethod) => void; onContinue: () => void }) {
-  return <View style={styles.fill}><ScrollView contentContainerStyle={styles.setup}><Text style={styles.title}>Screen Lock</Text><Text style={styles.subtitle}>Step 1 of 2  ·  Choose your lock</Text><View style={styles.progress}><View style={styles.progressFill} /></View>
-    {lockMethods.map((option) => <Pressable key={option} style={[styles.methodCard, method === option && styles.activeCard]} onPress={() => setMethod(option)}><Text style={styles.bigIcon}>{option === 'Fingerprint' ? '◉' : option === 'Pattern' ? '⠿' : '••••'}</Text><View style={styles.methodCopy}><Text style={styles.methodTitle}>{option}{option === 'Fingerprint' && <Text style={styles.recommended}>  Recommended</Text>}</Text><Text style={styles.methodDescription}>{option === 'Fingerprint' ? 'Unlock instantly with your finger' : option === 'Pattern' ? 'Draw your secret shape' : '4-digit numeric code'}</Text></View><View style={[styles.radio, method === option && styles.radioOn]} /></Pressable>)}
-    <Text style={styles.note}>You can change this anytime</Text></ScrollView><Pressable style={styles.continue} onPress={onContinue}><Text style={styles.tealText}>Continue</Text><Text style={styles.arrow}>→</Text></Pressable></View>;
+function SettingsScreen({ method, theme, setTheme, wallpaper, setWallpaper, themeColors, backgroundColor, resettingPassword, onResetPassword, onBack }: { method: LockMethod; theme: 'Dark' | 'Light' | 'System'; setTheme: (value: 'Dark' | 'Light' | 'System') => void; wallpaper: 'Night Glow' | 'Ocean' | 'Minimal'; setWallpaper: (value: 'Night Glow' | 'Ocean' | 'Minimal') => void; themeColors: ThemePalette; backgroundColor: string; resettingPassword: boolean; onResetPassword: () => void; onBack: () => void }) {
+  const themes: Array<'Dark' | 'Light' | 'System'> = ['Dark', 'Light', 'System'];
+  const wallpapers: Array<'Night Glow' | 'Ocean' | 'Minimal'> = ['Night Glow', 'Ocean', 'Minimal'];
+
+  return <SafeAreaView style={[styles.safe, { backgroundColor }]}><StatusBar barStyle={theme === 'Light' ? 'dark-content' : 'light-content'} backgroundColor={backgroundColor} />
+    <ScrollView contentContainerStyle={[styles.settingsPage, { backgroundColor }]}>
+      <View style={styles.settingsHeader}>
+        <Pressable onPress={onBack}><Text style={[styles.link, { color: themeColors.teal }]}>← Back</Text></Pressable>
+        <Text style={[styles.title, { color: themeColors.text }]}>Settings</Text>
+      </View>
+
+      <View style={[styles.settingsCard, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}> 
+        <Text style={[styles.sectionTitle, { color: themeColors.text }]}>Security</Text>
+        <View style={[styles.settingsRow, { borderBottomColor: themeColors.border }]}>
+          <Text style={[styles.appName, { color: themeColors.text }]}>Current lock</Text>
+          <Text style={[styles.link, { color: themeColors.teal }]}>{method}</Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ disabled: resettingPassword }}
+          disabled={resettingPassword}
+          onPress={onResetPassword}
+          style={[styles.resetButton, { borderColor: themeColors.danger, backgroundColor: themeColors.bg }]}
+        >
+          <Text style={[styles.resetButtonText, { color: themeColors.danger }]}>{resettingPassword ? 'Resetting...' : 'Reset password'}</Text>
+        </Pressable>
+        <Text style={[styles.infoText, { color: themeColors.muted }]}>Reset removes the saved lock and shows Fingerprint, Pattern, and PIN setup again.</Text>
+      </View>
+
+      <View style={[styles.settingsCard, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}> 
+        <Text style={[styles.sectionTitle, { color: themeColors.text }]}>Appearance</Text>
+        {themes.map((option) => (
+          <Pressable key={option} onPress={() => setTheme(option)} style={[styles.settingsRow, { borderBottomColor: themeColors.border }, theme === option && { backgroundColor: themeColors.bg, borderColor: themeColors.teal }]}>
+            <Text style={[styles.appName, { color: themeColors.text }]}>{option} theme</Text>
+            <Text style={[styles.link, { color: theme === option ? themeColors.teal : themeColors.muted }]}>{theme === option ? 'Active' : 'Use'}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <View style={[styles.settingsCard, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}> 
+        <Text style={[styles.sectionTitle, { color: themeColors.text }]}>Wallpaper</Text>
+        {wallpapers.map((option) => (
+          <Pressable key={option} onPress={() => setWallpaper(option)} style={[styles.settingsRow, { borderBottomColor: themeColors.border }, wallpaper === option && { backgroundColor: themeColors.bg, borderColor: themeColors.teal }]}>
+            <Text style={[styles.appName, { color: themeColors.text }]}>{option}</Text>
+            <Text style={[styles.link, { color: wallpaper === option ? themeColors.teal : themeColors.muted }]}>{wallpaper === option ? 'Applied' : 'Apply'}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </ScrollView>
+  </SafeAreaView>;
 }
 
-function HomeScreen({ lockedCount, onApps }: { lockedCount: number; onApps: () => void }) { return <ScrollView contentContainerStyle={styles.home}><Text style={styles.eyebrow}>SCREEN GUARD</Text><Text style={styles.title}>Screen Lock</Text><Text style={styles.subtitle}>Keep private apps behind one simple lock.</Text><View style={styles.homePanel}><View><Text style={styles.statValue}>{lockedCount}</Text><Text style={styles.statLabel}>apps locked</Text></View></View><Pressable style={styles.primary} onPress={onApps}><Text style={styles.tealText}>Manage protected apps</Text><Text style={styles.arrow}>→</Text></Pressable></ScrollView>; }
-function AppsScreen({ apps, lockedCount, loading, search, setSearch, onToggle, onOpen }: { apps: AppItem[]; lockedCount: number; loading: boolean; search: string; setSearch: (value: string) => void; onToggle: (packageName: string) => void; onOpen: (app: AppItem) => void }) { return <ScrollView contentContainerStyle={styles.list}><TextInput value={search} onChangeText={setSearch} placeholder="Search apps" placeholderTextColor={colors.muted} style={styles.search} /><View style={styles.count}><Text style={styles.countText}>{lockedCount} of {apps.length} apps locked</Text></View>{loading ? <Text style={styles.package}>Loading installed apps...</Text> : apps.length === 0 ? <Text style={styles.package}>No installed apps are available on this platform.</Text> : apps.map((app) => <View key={app.packageName} style={[styles.appRow, app.locked && styles.activeCard]}><Pressable onPress={() => app.locked && onOpen(app)} style={styles.appContent}><Image source={{ uri: app.icon }} style={styles.appIcon} /><View style={styles.appCopy}><Text style={styles.appName}>{app.name}</Text></View></Pressable><Pressable accessibilityRole="switch" accessibilityState={{ checked: app.locked }} style={[styles.switch, app.locked && styles.switchOn]} onPress={() => onToggle(app.packageName)}><View style={[styles.thumb, app.locked && styles.thumbOn]} /></Pressable></View>)}</ScrollView>; }
+function SetupScreen({ method, setMethod, themeColors, onContinue }: { method: LockMethod; setMethod: (value: LockMethod) => void; themeColors: ThemePalette; onContinue: () => void }) {
+  return (
+    <View style={[styles.fill, { backgroundColor: themeColors.bg }]}>
+      <ScrollView contentContainerStyle={[styles.setup, { backgroundColor: themeColors.bg }]}>
+        <Text style={[styles.title, { color: themeColors.text }]}>Screen Lock</Text>
+        <Text style={[styles.subtitle, { color: themeColors.muted }]}>Step 1 of 2  ·  Choose your lock</Text>
+        <View style={[styles.progress, { backgroundColor: themeColors.border }]}><View style={[styles.progressFill, { backgroundColor: themeColors.teal }]} /></View>
+        {lockMethods.map((option) => (
+          <Pressable
+            key={option}
+            style={[
+              styles.methodCard,
+              { backgroundColor: themeColors.panel, borderColor: themeColors.border },
+              method === option && { backgroundColor: themeColors.bg, borderColor: themeColors.teal },
+            ]}
+            onPress={() => setMethod(option)}
+          >
+            <Text style={[styles.bigIcon, { color: themeColors.text, backgroundColor: themeColors.border }]}>{option === 'Fingerprint' ? '◉' : option === 'Pattern' ? '⠿' : '••••'}</Text>
+            <View style={styles.methodCopy}>
+              <Text style={[styles.methodTitle, { color: themeColors.text }]}>{option}{option === 'Fingerprint' && <Text style={[styles.recommended, { color: themeColors.teal }]}>  Recommended</Text>}</Text>
+              <Text style={[styles.methodDescription, { color: themeColors.muted }]}>{option === 'Fingerprint' ? 'Unlock instantly with your finger' : option === 'Pattern' ? 'Drag between at least four dots' : '4-digit numeric code'}</Text>
+            </View>
+            <View style={[styles.radio, { borderColor: themeColors.muted }, method === option && { borderColor: themeColors.teal, backgroundColor: themeColors.teal }]} />
+          </Pressable>
+        ))}
+        <Text style={[styles.note, { color: themeColors.muted }]}>You can change this anytime</Text>
+      </ScrollView>
+      <Pressable style={[styles.continue, { borderColor: themeColors.teal }]} onPress={onContinue}><Text style={[styles.tealText, { color: themeColors.teal }]}>Continue</Text><Text style={[styles.arrow, { color: themeColors.teal }]}>→</Text></Pressable>
+    </View>
+  );
+}
 
-function ActivityScreen({ apps }: { apps: AppItem[] }) { const lockedCount = apps.filter((app) => app.locked).length; return <ScrollView contentContainerStyle={styles.activity}><View style={styles.header}><Text style={styles.title}>Security Activity</Text></View><View style={styles.stats}><View style={styles.stat}><Text style={styles.statIcon}>♙</Text><View><Text style={styles.statValue}>{lockedCount}</Text><Text style={styles.statLabel}>apps locked</Text></View></View><View style={styles.stat}><Text style={styles.statIcon}>◌</Text><View><Text style={styles.statValue}>{apps.length - lockedCount}</Text><Text style={styles.statLabel}>apps unlocked</Text></View></View></View><View style={styles.chartPanel}><Text style={styles.sectionTitle}>Current app status</Text>{apps.length === 0 ? <Text style={styles.package}>No installed apps are available.</Text> : apps.map((app) => <View key={app.packageName} style={styles.activityRow}><View style={[styles.activityIcon, { backgroundColor: app.locked ? colors.teal : colors.border }]}><Text style={styles.appMark}>{app.mark}</Text></View><View style={styles.appCopy}><Text style={styles.appName}>{app.name}</Text></View><Text style={[styles.link, !app.locked && { color: colors.muted }]}>{app.locked ? 'Locked' : 'Unlocked'}</Text></View>)}</View></ScrollView>; }
+function HomeScreen({ lockedCount, onApps }: { lockedCount: number; onApps: () => void }) {
+  return <ScrollView contentContainerStyle={styles.home}>
+    <Text style={styles.eyebrow}>SCREEN GUARD</Text>
+    <Text style={styles.title}>Screen Lock</Text>
+    <Text style={styles.subtitle}>Keep private apps behind one simple lock.</Text>
+    <View style={styles.homePanel}>
+      <View>
+        <Text style={styles.statValue}>{lockedCount}</Text>
+        <Text style={styles.statLabel}>apps locked</Text>
+      </View>
+    </View>
+    <View style={styles.infoCard}>
+      <Text style={styles.infoTitle}>Why a screen lock matters</Text>
+      <Text style={styles.infoText}>A screen lock adds a quick barrier against unwanted access, accidental taps, and prying eyes. It helps protect personal messages, photos, banking apps, and sensitive data when your device is left unattended.</Text>
+    </View>
+    <Pressable style={styles.primary} onPress={onApps}><Text style={styles.tealText}>Manage protected apps</Text><Text style={styles.arrow}>→</Text></Pressable>
+  </ScrollView>;
+}
+function AppsScreen({ apps, totalCount, lockedCount, loading, search, setSearch, themeColors, onToggle, onOpen }: { apps: AppItem[]; totalCount: number; lockedCount: number; loading: boolean; search: string; setSearch: (value: string) => void; themeColors: ThemePalette; onToggle: (packageName: string) => void; onOpen: (app: AppItem) => void }) {
+  return (
+    <ScrollView contentContainerStyle={[styles.list, { backgroundColor: themeColors.bg }]} keyboardShouldPersistTaps="handled">
+      <View style={[styles.appsHero, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}>
+        <View style={styles.appsHeroCopy}>
+          <Text style={[styles.appsHeroTitle, { color: themeColors.text }]}>Protected apps</Text>
+          <Text style={[styles.appsHeroSubtitle, { color: themeColors.muted }]}>Choose which apps require your lock.</Text>
+        </View>
+        <View style={[styles.appsCountBadge, { backgroundColor: themeColors.bg, borderColor: themeColors.teal }]}>
+          <Text style={[styles.appsCountValue, { color: themeColors.teal }]}>{lockedCount}</Text>
+          <Text style={[styles.appsCountLabel, { color: themeColors.muted }]}>locked</Text>
+        </View>
+      </View>
 
-function CredentialSetupScreen({ method, onComplete, onBack }: { method: LockMethod; onComplete: (value: string) => Promise<void>; onBack: () => void }) {
+      <View style={[styles.searchWrap, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}>
+        <Text style={[styles.searchGlyph, { color: themeColors.teal }]}>⌕</Text>
+        <TextInput
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search installed apps"
+          placeholderTextColor={themeColors.muted}
+          style={[styles.search, { color: themeColors.text }]}
+          autoCorrect={false}
+          returnKeyType="search"
+        />
+      </View>
+
+      <Text style={[styles.listLabel, { color: themeColors.muted }]}>{lockedCount} of {totalCount} apps protected</Text>
+
+      {loading ? (
+        <View style={[styles.emptyState, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}><Text style={[styles.package, { color: themeColors.muted }]}>Loading installed apps...</Text></View>
+      ) : apps.length === 0 ? (
+        <View style={[styles.emptyState, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}><Text style={[styles.emptyTitle, { color: themeColors.text }]}>No apps found</Text><Text style={[styles.package, { color: themeColors.muted }]}>{search ? 'Try a different search term.' : 'No launchable apps are available on this device.'}</Text></View>
+      ) : (
+        <View style={[styles.appListCard, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}>
+          {apps.map((app) => (
+            <View key={app.packageName} style={[styles.appListRow, app.locked && { backgroundColor: themeColors.bg, borderColor: themeColors.teal }]}>
+              <Pressable onPress={() => app.locked && onOpen(app)} style={styles.appContent} accessibilityRole={app.locked ? 'button' : undefined}>
+                {app.icon ? (
+                  <Image source={{ uri: app.icon }} style={[styles.appIcon, { backgroundColor: themeColors.border }]} />
+                ) : (
+                  <View style={[styles.appIcon, styles.activityIcon, { backgroundColor: themeColors.border }]}><Text style={[styles.appMark, { color: themeColors.text }]}>{app.mark}</Text></View>
+                )}
+                <View style={styles.appCopy}>
+                  <Text style={[styles.appName, { color: themeColors.text }]} numberOfLines={1}>{app.name}</Text>
+                  <Text style={[styles.appState, { color: themeColors.muted }]}>{app.locked ? 'Protection enabled' : 'Not protected'}</Text>
+                </View>
+              </Pressable>
+              <Pressable
+                accessibilityRole="switch"
+                accessibilityLabel={`${app.locked ? 'Disable' : 'Enable'} lock for ${app.name}`}
+                accessibilityState={{ checked: app.locked }}
+                style={[styles.switch, { backgroundColor: themeColors.border }, app.locked && { backgroundColor: themeColors.teal }]}
+                onPress={() => onToggle(app.packageName)}
+              >
+                <View style={[styles.thumb, { backgroundColor: themeColors.text }, app.locked && { backgroundColor: themeColors.bg }]} />
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+function ActivityScreen({ apps, themeColors }: { apps: AppItem[]; themeColors: ThemePalette }) {
+  const lockedCount = apps.filter((app) => app.locked).length;
+
+  return (
+    <ScrollView contentContainerStyle={[styles.activity, { backgroundColor: themeColors.bg }]}>
+      <View style={styles.header}><Text style={[styles.title, { color: themeColors.text }]}>Security Activity</Text></View>
+      <View style={styles.stats}>
+        <View style={styles.stat}><Text style={[styles.statIcon, { color: themeColors.teal }]}>♙</Text><View><Text style={[styles.statValue, { color: themeColors.text }]}>{lockedCount}</Text><Text style={[styles.statLabel, { color: themeColors.muted }]}>apps locked</Text></View></View>
+        <View style={styles.stat}><Text style={[styles.statIcon, { color: themeColors.teal }]}>◌</Text><View><Text style={[styles.statValue, { color: themeColors.text }]}>{apps.length - lockedCount}</Text><Text style={[styles.statLabel, { color: themeColors.muted }]}>apps unlocked</Text></View></View>
+      </View>
+      <View style={[styles.chartPanel, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}>
+        <Text style={[styles.sectionTitle, { color: themeColors.text }]}>Installed app status</Text>
+        {apps.length === 0 ? (
+          <Text style={[styles.package, { color: themeColors.muted }]}>No installed apps are available.</Text>
+        ) : apps.map((app) => (
+          <View key={app.packageName} style={[styles.appRow, { borderBottomColor: themeColors.border }, app.locked && { backgroundColor: themeColors.bg, borderRadius: 12, paddingHorizontal: 8 }]}>
+            <View style={styles.appContent}>
+              {app.icon ? (
+                <Image source={{ uri: app.icon }} style={[styles.appIcon, { backgroundColor: themeColors.border }]} />
+              ) : (
+                <View style={[styles.appIcon, styles.activityIcon, { backgroundColor: themeColors.border }]}><Text style={[styles.appMark, { color: themeColors.text }]}>{app.mark}</Text></View>
+              )}
+              <View style={styles.appCopy}>
+                <Text style={[styles.appName, { color: themeColors.text }]}>{app.name}</Text>
+              </View>
+            </View>
+            <Text style={[styles.statusBadge, { color: app.locked ? themeColors.bg : themeColors.muted, backgroundColor: app.locked ? themeColors.teal : themeColors.border }]}>
+              {app.locked ? 'Locked' : 'Unlocked'}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </ScrollView>
+  );
+}
+
+function CredentialSetupScreen({ method, themeColors, onComplete, onBack }: { method: LockMethod; themeColors: ThemePalette; onComplete: (value: string) => Promise<void>; onBack: () => void }) {
   const [value, setValue] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [step, setStep] = useState<'enter' | 'confirm'>('enter');
@@ -178,14 +439,77 @@ function CredentialSetupScreen({ method, onComplete, onBack }: { method: LockMet
     const authenticate = async () => {
       setBusy(true);
       setError('');
-      const supported = await LocalAuthentication.hasHardwareAsync();
-      const enrolled = await LocalAuthentication.isEnrolledAsync();
-      if (!supported || !enrolled) { setError('Set up a fingerprint or device biometric first.'); setBusy(false); return; }
-      const result = await LocalAuthentication.authenticateAsync({ promptMessage: 'Confirm your fingerprint for Screen Guard' });
-      if (result.success) await complete('enabled'); else setError('Fingerprint verification was not completed.');
-      setBusy(false);
+
+      try {
+        const supported = await LocalAuthentication.hasHardwareAsync();
+        const enrolled = await LocalAuthentication.isEnrolledAsync();
+
+        if (!supported) {
+          setError('This device does not have supported biometric hardware.');
+          return;
+        }
+        if (!enrolled) {
+          setError('No fingerprint or biometric is enrolled. Add one in Android Settings, then try again.');
+          return;
+        }
+
+        const result = await LocalAuthentication.authenticateAsync({
+          promptMessage: 'Confirm your fingerprint for Screen Guard',
+          disableDeviceFallback: false,
+        });
+
+        if (result.success) {
+          await onComplete('enabled');
+        } else {
+          setError('Fingerprint verification was cancelled or not completed.');
+        }
+      } catch {
+        setError('Unable to check biometric security. Please try again.');
+      } finally {
+        setBusy(false);
+      }
     };
-    return <ValidationPage title="Set up fingerprint" subtitle="Verify your fingerprint to protect every selected app." onBack={onBack} error={error}><Pressable style={styles.fingerprint} disabled={busy} onPress={authenticate}><Text style={styles.fingerprintGlyph}>◉</Text></Pressable><Text style={styles.unlockHint}>{busy ? 'Checking fingerprint...' : 'Touch the sensor to continue'}</Text></ValidationPage>;
+
+    return (
+      <ValidationPage
+        title="Fingerprint setup"
+        subtitle="Use your device's enrolled biometric to protect your selected apps."
+        onBack={onBack}
+        error=""
+        themeColors={themeColors}
+      >
+        <View style={validationStyles.fingerprintHero}>
+          <View style={[validationStyles.biometricOrb, { backgroundColor: themeColors.panel, borderColor: themeColors.border }, busy && validationStyles.biometricOrbActive]}>
+            <View style={[validationStyles.biometricRingOuter, { borderColor: themeColors.border }]} />
+            <View style={[validationStyles.biometricRingInner, { backgroundColor: themeColors.bg, borderColor: themeColors.teal }]} />
+            <Text style={[validationStyles.biometricGlyph, { color: themeColors.teal }]}>◎</Text>
+          </View>
+          <Text style={[validationStyles.biometricLabel, { color: themeColors.teal }]}>BIOMETRIC PROTECTION</Text>
+        </View>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Scan fingerprint"
+          disabled={busy}
+          onPress={() => { void authenticate(); }}
+          style={({ pressed }) => [
+            validationStyles.biometricButton,
+            busy && validationStyles.disabled,
+            pressed && !busy && validationStyles.biometricButtonPressed,
+          ]}
+        >
+          <Text style={[validationStyles.biometricButtonText, { color: themeColors.bg }]}>{busy ? 'Waiting for sensor...' : 'Scan fingerprint'}</Text>
+        </Pressable>
+
+        <View style={[validationStyles.biometricStatus, { backgroundColor: themeColors.panel, borderColor: themeColors.border }, error && validationStyles.biometricStatusError]}>
+          <View style={[validationStyles.biometricStatusDot, { backgroundColor: themeColors.teal }, error && validationStyles.biometricStatusDotError]} />
+          <View style={validationStyles.biometricStatusCopy}>
+            <Text style={[validationStyles.biometricStatusTitle, { color: themeColors.text }]}>{error ? 'Action required' : 'Protected by your device'}</Text>
+            <Text style={[validationStyles.biometricStatusText, { color: error ? themeColors.danger : themeColors.muted }]}>{error || 'Biometric data is verified locally and is never uploaded.'}</Text>
+          </View>
+        </View>
+      </ValidationPage>
+    );
   }
 
   const isPattern = method === 'Pattern';
@@ -199,21 +523,399 @@ function CredentialSetupScreen({ method, onComplete, onBack }: { method: LockMet
     if (value !== confirmation) return setError(`Your ${method.toLowerCase()} entries do not match.`);
     complete(value);
   };
-  return <ValidationPage title={step === 'enter' ? `Create your ${method.toLowerCase()}` : `Confirm your ${method.toLowerCase()}`} subtitle={step === 'enter' ? (isPattern ? 'Connect at least 4 dots.' : 'Choose a 4-digit number.') : `Enter your ${method.toLowerCase()} again to confirm.`} onBack={step === 'enter' ? onBack : () => { setError(''); setStep('enter'); }} error={error}>
-    {step === 'enter' ? (isPattern ? <PatternPad value={value} onChange={setValue} /> : <PinPad value={value} onChange={setValue} />) : (isPattern ? <PatternPad value={confirmation} onChange={setConfirmation} /> : <PinPad value={confirmation} onChange={setConfirmation} />)}
-    <Pressable style={[styles.continue, (step === 'enter' ? !validLength : !confirmation) || busy ? validationStyles.disabled : undefined]} disabled={step === 'enter' ? !validLength || busy : !confirmation || busy} onPress={step === 'enter' ? continueToConfirmation : save}><Text style={styles.tealText}>{step === 'enter' ? 'Continue' : `Save ${method}`}</Text></Pressable>
-  </ValidationPage>;
+  return (
+    <ValidationPage
+      title={step === 'enter' ? `Create your ${method.toLowerCase()}` : `Confirm your ${method.toLowerCase()}`}
+      subtitle={step === 'enter' ? (isPattern ? 'Drag between at least four dots.' : 'Choose a 4-digit number.') : `Enter your ${method.toLowerCase()} again to confirm.`}
+      onBack={step === 'enter' ? onBack : () => { setError(''); setStep('enter'); }}
+      error={error}
+      themeColors={themeColors}
+    >
+      {step === 'enter'
+        ? (isPattern ? <PatternPad value={value} onChange={setValue} themeColors={themeColors} /> : <PinPad value={value} onChange={setValue} themeColors={themeColors} />)
+        : (isPattern ? <PatternPad value={confirmation} onChange={setConfirmation} themeColors={themeColors} /> : <PinPad value={confirmation} onChange={setConfirmation} themeColors={themeColors} />)}
+      <Pressable
+        style={[
+          styles.continue,
+          { borderColor: themeColors.teal },
+          (step === 'enter' ? !validLength : !confirmation) || busy ? validationStyles.disabled : undefined,
+        ]}
+        disabled={step === 'enter' ? !validLength || busy : !confirmation || busy}
+        onPress={step === 'enter' ? continueToConfirmation : save}
+      >
+        <Text style={[styles.tealText, { color: themeColors.teal }]}>{step === 'enter' ? 'Continue' : `Save ${method}`}</Text>
+      </Pressable>
+    </ValidationPage>
+  );
 }
 
-function ValidationPage({ title, subtitle, onBack, error, children }: { title: string; subtitle: string; onBack: () => void; error: string; children: React.ReactNode }) { return <View style={styles.fill}><ScrollView contentContainerStyle={validationStyles.validation}><Pressable onPress={onBack}><Text style={styles.link}>← Change lock method</Text></Pressable><Text style={styles.title}>{title}</Text><Text style={styles.subtitle}>{subtitle}</Text>{error ? <Text style={validationStyles.error}>{error}</Text> : null}{children}</ScrollView></View>; }
+function ValidationPage({ title, subtitle, onBack, error, themeColors, children }: { title: string; subtitle: string; onBack: () => void; error: string; themeColors: ThemePalette; children: React.ReactNode }) {
+  return (
+    <View style={[styles.fill, { backgroundColor: themeColors.bg }]}>
+      <ScrollView contentContainerStyle={[validationStyles.validation, { backgroundColor: themeColors.bg }]}>
+        <Pressable onPress={onBack}><Text style={[styles.link, { color: themeColors.teal }]}>← Change lock method</Text></Pressable>
+        <Text style={[styles.title, { color: themeColors.text }]}>{title}</Text>
+        <Text style={[styles.subtitle, { color: themeColors.muted }]}>{subtitle}</Text>
+        {error ? <Text style={[validationStyles.error, { color: themeColors.danger }]}>{error}</Text> : null}
+        {children}
+      </ScrollView>
+    </View>
+  );
+}
 
-function PatternPad({ value, onChange }: { value: string; onChange: (value: string) => void }) { return <View style={validationStyles.patternPad}>{Array.from({ length: 9 }, (_, index) => <Pressable key={index} style={[validationStyles.patternDot, value.includes(String(index)) && validationStyles.patternDotActive]} onPress={() => onChange(value.includes(String(index)) ? value : value + index)}><Text style={validationStyles.patternNumber}>{value.includes(String(index)) ? value.indexOf(String(index)) + 1 : ''}</Text></Pressable>)}</View>; }
+type PatternPoint = { x: number; y: number };
 
-function PinPad({ value, onChange }: { value: string; onChange: (value: string) => void }) { return <View style={validationStyles.pinPad}>{['1', '2', '3', '4', '5', '6', '7', '8', '9', 'clear', '0', 'back'].map((key) => { const selected = key !== 'clear' && key !== 'back' && value.includes(key); return <Pressable key={key} style={[validationStyles.key, selected && validationStyles.keySelected]} onPress={() => key === 'clear' ? onChange('') : key === 'back' ? onChange(value.slice(0, -1)) : value.length < 4 ? onChange(value + key) : undefined}><Text style={[validationStyles.keyText, selected && validationStyles.keyTextSelected]}>{key === 'back' ? '←' : key === 'clear' ? 'C' : key}</Text></Pressable>; })}</View>; }
+type PatternLineProps = {
+  start: PatternPoint;
+  end: PatternPoint;
+  color: string;
+};
 
-function LockScreen({ app, method, credential, deviceId, setMethod, onUnlock, onClose }: { app: AppItem; method: LockMethod; credential: string; deviceId: string; setMethod: (value: LockMethod) => void; onUnlock: () => void; onClose: () => void }) { const [value, setValue] = useState(''); const [error, setError] = useState(''); const verify = async () => { if (method === 'Fingerprint') { const result = await LocalAuthentication.authenticateAsync({ promptMessage: `Unlock ${app.name}` }); if (result.success) onUnlock(); else setError('Fingerprint verification failed.'); return; } try { const valid = await verifyLockCredential(deviceId, value); if (valid) onUnlock(); else setError(`Incorrect ${method.toLowerCase()}.`); } catch { if (value === credential) onUnlock(); else setError('Unable to verify with the backend.'); } }; return <SafeAreaView style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={colors.bg} /><ScrollView contentContainerStyle={styles.lock}><Pressable style={styles.close} onPress={onClose}><Text style={styles.closeText}>×</Text></Pressable><View style={[styles.lockIcon, { backgroundColor: app.color }]}><Text style={styles.lockMark}>{app.mark}</Text></View><Text style={styles.lockTitle}>{app.name} is locked</Text><View style={styles.selector}>{lockMethods.map((option) => <Pressable key={option} style={[styles.selectorItem, method === option && styles.selectorActive]} onPress={() => { setMethod(option); setValue(''); setError(''); }}><Text style={[styles.selectorText, method === option && styles.tealText]}>{option === 'Fingerprint' ? '◉' : option === 'Pattern' ? '⠿' : '••••'} {option}</Text></Pressable>)}</View>{method === 'Fingerprint' ? <Pressable style={styles.fingerprint} onPress={verify}><Text style={styles.fingerprintGlyph}>◉</Text></Pressable> : method === 'Pattern' ? <PatternPad value={value} onChange={setValue} /> : <PinPad value={value} onChange={setValue} />}<Pressable style={styles.verifyButton} onPress={verify}><Text style={styles.tealText}>Verify {method}</Text></Pressable>{error ? <Text style={validationStyles.error}>{error}</Text> : null}<Text style={styles.unlockHint}>{method === 'Fingerprint' ? 'Touch the sensor to unlock' : `Enter your ${method.toLowerCase()} to unlock`}</Text></ScrollView></SafeAreaView>; }
+function PatternLine({ start, end, color }: PatternLineProps) {
+  const deltaX = end.x - start.x;
+  const deltaY = end.y - start.y;
+  const length = Math.hypot(deltaX, deltaY);
+  const angle = Math.atan2(deltaY, deltaX);
 
-const validationStyles = StyleSheet.create({ validation: { padding: 30, paddingTop: 42, paddingBottom: 40 }, validationLabel: { color: colors.muted, fontSize: 16, marginTop: 20, marginBottom: 10 }, error: { color: colors.danger, fontSize: 15, marginTop: 16, textAlign: 'center' }, disabled: { opacity: 0.45 }, patternPad: { width: 270, height: 270, marginTop: 30, alignSelf: 'center', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-around', alignContent: 'space-around' }, patternDot: { width: 72, height: 72, borderRadius: 40, borderWidth: 2, borderColor: colors.border, backgroundColor: colors.panel, alignItems: 'center', justifyContent: 'center' }, patternDotActive: { borderColor: colors.teal, backgroundColor: '#07303b' }, patternNumber: { color: colors.teal, fontSize: 22, fontWeight: '700' }, pinPad: { width: 270, marginTop: 25, alignSelf: 'center', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }, key: { width: 80, height: 58, marginBottom: 10, borderRadius: 12, backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' }, keySelected: { backgroundColor: '#0c3a43', borderColor: colors.teal }, keyText: { color: colors.text, fontSize: 22, fontWeight: '700' }, keyTextSelected: { color: colors.teal } });
+  if (length < 1) return null;
 
-const styles = StyleSheet.create({ safe: { flex: 1, backgroundColor: colors.bg }, fill: { flex: 1 }, setup: { padding: 30, paddingTop: 42, paddingBottom: 20 }, home: { padding: 30, paddingTop: 65, flexGrow: 1 }, list: { padding: 25, paddingBottom: 110 }, activity: { padding: 30, paddingBottom: 110 }, lock: { padding: 30, paddingTop: 60, alignItems: 'center', minHeight: '100%' }, hero: { color: colors.teal, fontSize: 52, marginBottom: 12 }, title: { color: colors.text, fontSize: 31, fontWeight: '700' }, subtitle: { color: colors.muted, fontSize: 19, marginTop: 12 }, progress: { height: 7, backgroundColor: '#26344b', borderRadius: 5, marginVertical: 25 }, progressFill: { width: '50%', height: '100%', backgroundColor: colors.teal, borderRadius: 5 }, methodCard: { minHeight: 130, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel, marginBottom: 16, padding: 20, flexDirection: 'row', alignItems: 'center' }, activeCard: { borderColor: colors.teal, backgroundColor: '#07303b' }, bigIcon: { width: 62, height: 62, borderRadius: 34, backgroundColor: '#243044', color: colors.text, fontSize: 27, textAlign: 'center', textAlignVertical: 'center' }, methodCopy: { flex: 1, paddingHorizontal: 18 }, methodTitle: { color: colors.text, fontSize: 21, fontWeight: '700' }, methodDescription: { color: colors.muted, fontSize: 16, marginTop: 7 }, recommended: { color: colors.teal, fontSize: 13 }, radio: { width: 27, height: 27, borderRadius: 20, borderWidth: 2, borderColor: colors.muted }, radioOn: { borderColor: colors.teal, backgroundColor: colors.teal }, note: { color: colors.muted, fontSize: 16, marginTop: 8 }, continue: { height: 64, borderWidth: 1.5, borderColor: colors.teal, borderRadius: 17, margin: 30, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }, tealText: { color: colors.teal, fontWeight: '700', fontSize: 18 }, arrow: { position: 'absolute', right: 20, color: colors.teal, fontSize: 30 }, bottom: { height: 100, borderTopWidth: 1, borderTopColor: colors.border, flexDirection: 'row', justifyContent: 'space-around', paddingTop: 10 }, nav: { alignItems: 'center', width: '30%' }, navIcon: { color: colors.muted, fontSize: 28, height: 37 }, navLabel: { color: colors.muted, fontSize: 16 }, eyebrow: { color: colors.teal, fontSize: 14, letterSpacing: 3, fontWeight: '700', marginBottom: 20 }, homePanel: { marginTop: 45, padding: 25, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel, flexDirection: 'row', alignItems: 'center' }, statValue: { color: colors.text, fontSize: 30, fontWeight: '700' }, statLabel: { color: colors.muted, fontSize: 16 }, primary: { height: 64, marginTop: 25, borderRadius: 17, backgroundColor: '#073c48', alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }, search: { height: 68, borderWidth: 1, borderColor: '#3a4860', borderRadius: 15, color: colors.text, fontSize: 19, paddingHorizontal: 22, marginBottom: 28 }, count: { height: 62, borderRadius: 15, backgroundColor: colors.panel, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginBottom: 18 }, countIcon: { color: colors.teal, fontSize: 30, marginRight: 17 }, countText: { color: colors.text, fontSize: 19, fontWeight: '600' }, appRow: { minHeight: 92, borderRadius: 17, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel, marginBottom: 7, padding: 17, flexDirection: 'row', alignItems: 'center' }, appContent: { flex: 1, flexDirection: 'row', alignItems: 'center' }, appIcon: { width: 54, height: 54, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginRight: 18 }, appMark: { color: '#fff', fontSize: 27, fontWeight: '700' }, appCopy: { flex: 1 }, appName: { color: colors.text, fontSize: 18, fontWeight: '700' }, package: { color: colors.muted, fontSize: 15, marginTop: 4 }, switch: { height: 34, width: 60, borderRadius: 20, borderWidth: 2, borderColor: '#435067', padding: 2, justifyContent: 'center' }, switchOn: { backgroundColor: colors.teal }, thumb: { height: 28, width: 28, borderRadius: 20, backgroundColor: '#cbd1db' }, thumbOn: { alignSelf: 'flex-end', backgroundColor: '#2eced0' }, header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }, stats: { flexDirection: 'row', gap: 15 }, stat: { flex: 1, minHeight: 110, padding: 15, borderRadius: 18, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel, flexDirection: 'row', alignItems: 'center' }, statIcon: { color: colors.teal, fontSize: 30, marginRight: 13 }, chartPanel: { marginVertical: 24, padding: 20, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel }, sectionTitle: { color: colors.text, fontSize: 19, fontWeight: '700' }, chart: { height: 180, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'flex-end', paddingTop: 25 }, barColumn: { height: '100%', alignItems: 'center', justifyContent: 'flex-end' }, bar: { width: 30, minHeight: 20, borderRadius: 5, backgroundColor: '#195b61' }, barActive: { backgroundColor: colors.teal }, day: { color: colors.muted, marginTop: 9 }, link: { color: colors.teal, fontSize: 16 }, activityRow: { minHeight: 84, borderRadius: 17, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel, marginBottom: 7, padding: 13, flexDirection: 'row', alignItems: 'center' }, warning: { backgroundColor: '#25131f', borderColor: '#6d2538' }, danger: { color: colors.danger }, activityIcon: { width: 52, height: 52, borderRadius: 28, alignItems: 'center', justifyContent: 'center', marginRight: 16 }, close: { position: 'absolute', right: 8, top: 10, width: 42, height: 42, borderRadius: 25, borderWidth: 1, borderColor: '#637086', alignItems: 'center', justifyContent: 'center', zIndex: 1 }, closeText: { color: colors.muted, fontSize: 32 }, lockIcon: { width: 70, height: 70, borderRadius: 22, alignItems: 'center', justifyContent: 'center' }, lockMark: { color: '#fff', fontSize: 40 }, lockTitle: { color: colors.text, fontSize: 29, fontWeight: '700', marginVertical: 30 }, selector: { width: '100%', height: 70, borderRadius: 38, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel, flexDirection: 'row' }, selectorItem: { flex: 1, alignItems: 'center', justifyContent: 'center' }, selectorActive: { borderWidth: 1, borderColor: colors.teal, borderRadius: 38, backgroundColor: '#0c3a43' }, selectorText: { color: colors.muted, fontSize: 14 }, fingerprint: { width: 275, height: 275, borderRadius: 150, borderWidth: 10, borderColor: colors.teal, backgroundColor: '#06232e', alignItems: 'center', justifyContent: 'center', marginTop: 100, shadowColor: colors.teal, shadowOpacity: 0.8, shadowRadius: 25, elevation: 15 }, fingerprintGlyph: { color: colors.teal, fontSize: 100 }, unlockHint: { color: colors.muted, fontSize: 19, marginTop: 42 }, useInstead: { color: colors.teal, fontSize: 18, fontWeight: '600', marginTop: 45 }, verify: { marginTop: 100, alignItems: 'center' }, inputDots: { color: colors.teal, fontSize: 35 }, verifyButton: { marginTop: 30, height: 56, minWidth: 210, borderWidth: 1, borderColor: colors.teal, borderRadius: 15, alignItems: 'center', justifyContent: 'center' } });
+  return (
+    <View
+      pointerEvents="none"
+      style={[
+        validationStyles.patternLine,
+        {
+          backgroundColor: color,
+          width: length,
+          left: start.x,
+          top: start.y,
+          transform: [{ translateX: -2 }, { translateY: -1 }, { rotateZ: `${angle}rad` }],
+        },
+      ]}
+    />
+  );
+}
+
+function PatternPad({ value, onChange, themeColors = screenGuardColors }: { value: string; onChange: (value: string) => void; themeColors?: ThemePalette }) {
+  const [activePoint, setActivePoint] = useState<PatternPoint | null>(null);
+  const valueRef = useRef(value);
+  const onChangeRef = useRef(onChange);
+  valueRef.current = value;
+  onChangeRef.current = onChange;
+
+  const updatePoint = (x: number, y: number) => {
+    const boundedX = Math.max(0, Math.min(PATTERN_SIZE, x));
+    const boundedY = Math.max(0, Math.min(PATTERN_SIZE, y));
+    const point = { x: boundedX, y: boundedY };
+    setActivePoint(point);
+
+    let nearestIndex = -1;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    PATTERN_POINTS.forEach((candidate, index) => {
+      const distance = Math.hypot(candidate.x - boundedX, candidate.y - boundedY);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    });
+
+    if (nearestDistance <= PATTERN_POINT_RADIUS && !valueRef.current.includes(String(nearestIndex))) {
+      const nextValue = `${valueRef.current}${nearestIndex}`;
+      valueRef.current = nextValue;
+      onChangeRef.current(nextValue);
+    }
+  };
+
+  const panResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onStartShouldSetPanResponderCapture: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onShouldBlockNativeResponder: () => true,
+    onPanResponderGrant: (event) => {
+      const { locationX, locationY } = event.nativeEvent;
+      updatePoint(locationX, locationY);
+    },
+    onPanResponderMove: (event) => {
+      const { locationX, locationY } = event.nativeEvent;
+      updatePoint(locationX, locationY);
+    },
+    onPanResponderRelease: () => setActivePoint(null),
+    onPanResponderTerminate: () => setActivePoint(null),
+  }), []);
+
+  const selectedPoints = value
+    .split('')
+    .map((character) => PATTERN_POINTS[Number(character)])
+    .filter(Boolean);
+  const lastPoint = selectedPoints[selectedPoints.length - 1];
+
+  return (
+    <View
+      accessibilityLabel="Pattern lock area. Drag between at least four dots."
+      style={[validationStyles.patternPad, { backgroundColor: themeColors.bg, borderColor: themeColors.border }]}
+      {...panResponder.panHandlers}
+    >
+      {selectedPoints.slice(1).map((point, index) => (
+        <PatternLine key={`line-${index}`} start={selectedPoints[index]} end={point} color={themeColors.teal} />
+      ))}
+      {activePoint && lastPoint ? <PatternLine start={lastPoint} end={activePoint} color={themeColors.teal} /> : null}
+      {PATTERN_POINTS.map((point, index) => {
+        const selectedIndex = value.indexOf(String(index));
+        const selected = selectedIndex >= 0;
+        return (
+          <View
+            key={index}
+            pointerEvents="none"
+            style={[
+              validationStyles.patternDot,
+              {
+                left: point.x - PATTERN_DOT_SIZE / 2,
+                top: point.y - PATTERN_DOT_SIZE / 2,
+                backgroundColor: selected ? themeColors.teal : themeColors.panel,
+                borderColor: selected ? themeColors.teal : themeColors.border,
+              },
+            ]}
+          >
+            <Text style={[validationStyles.patternNumber, { color: selected ? themeColors.bg : themeColors.muted }]}>
+              {selected ? selectedIndex + 1 : ''}
+            </Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function PinPad({ value, onChange, themeColors = screenGuardColors }: { value: string; onChange: (value: string) => void; themeColors?: ThemePalette }) {
+  return (
+    <View style={validationStyles.pinPad}>
+      {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'clear', '0', 'back'].map((key) => {
+        const selected = key !== 'clear' && key !== 'back' && value.includes(key);
+        return (
+          <Pressable
+            key={key}
+            style={[validationStyles.key, { backgroundColor: themeColors.panel, borderColor: themeColors.border }, selected && { backgroundColor: themeColors.bg, borderColor: themeColors.teal }]}
+            onPress={() => key === 'clear' ? onChange('') : key === 'back' ? onChange(value.slice(0, -1)) : value.length < 4 ? onChange(value + key) : undefined}
+          >
+            <Text style={[validationStyles.keyText, { color: selected ? themeColors.teal : themeColors.text }]}>{key === 'back' ? '←' : key === 'clear' ? 'C' : key}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function LockScreen({ app, method, credential, deviceId, themeColors, setMethod, onUnlock, onClose }: { app: AppItem; method: LockMethod; credential: string; deviceId: string; themeColors: ThemePalette; setMethod: (value: LockMethod) => void; onUnlock: () => void; onClose: () => void }) {
+  const [value, setValue] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const verify = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+
+    try {
+      if (method === 'Fingerprint') {
+        const supported = await LocalAuthentication.hasHardwareAsync();
+        const enrolled = await LocalAuthentication.isEnrolledAsync();
+        if (!supported || !enrolled) {
+          setError('No enrolled fingerprint or device biometric is available.');
+          return;
+        }
+        const result = await LocalAuthentication.authenticateAsync({ promptMessage: `Unlock ${app.name}` });
+        if (result.success) onUnlock();
+        else setError('Fingerprint verification was not completed.');
+        return;
+      }
+
+      const valid = await verifyLockCredential(deviceId, value);
+      if (valid) onUnlock();
+      else setError(`Incorrect ${method.toLowerCase()}.`);
+    } catch {
+      if (value === credential) onUnlock();
+      else setError('Unable to verify with the backend. Check your connection and try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <SafeAreaView style={[styles.safe, { backgroundColor: themeColors.bg }]}>
+      <StatusBar barStyle={themeColors === themePalettes.Light ? 'dark-content' : 'light-content'} backgroundColor={themeColors.bg} />
+      <ScrollView contentContainerStyle={[styles.lock, { backgroundColor: themeColors.bg }]}>
+        <Pressable style={styles.close} onPress={onClose}><Text style={[styles.closeText, { color: themeColors.text }]}>×</Text></Pressable>
+        <View style={[styles.lockIcon, { backgroundColor: app.color }]}><Text style={styles.lockMark}>{app.mark}</Text></View>
+        <Text style={[styles.lockTitle, { color: themeColors.text }]}>{app.name} is locked</Text>
+        <View style={styles.selector}>
+          {lockMethods.map((option) => (
+            <Pressable
+              key={option}
+              style={[styles.selectorItem, { backgroundColor: themeColors.panel, borderColor: themeColors.border }, method === option && { borderColor: themeColors.teal }]}
+              onPress={() => { setMethod(option); setValue(''); setError(''); }}
+            >
+              <Text style={[styles.selectorText, { color: method === option ? themeColors.teal : themeColors.text }]}>{option === 'Fingerprint' ? '◉' : option === 'Pattern' ? '⠿' : '••••'} {option}</Text>
+            </Pressable>
+          ))}
+        </View>
+        {method === 'Fingerprint' ? (
+          <Pressable style={[styles.fingerprint, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]} onPress={() => { void verify(); }}>
+            <Text style={[styles.fingerprintGlyph, { color: themeColors.teal }]}>◉</Text>
+          </Pressable>
+        ) : method === 'Pattern' ? (
+          <PatternPad value={value} onChange={setValue} themeColors={themeColors} />
+        ) : (
+          <PinPad value={value} onChange={setValue} themeColors={themeColors} />
+        )}
+        <Pressable style={[styles.verifyButton, { borderColor: themeColors.teal }]} disabled={busy} onPress={() => { void verify(); }}>
+          <Text style={[styles.tealText, { color: themeColors.teal }]}>{busy ? 'Verifying...' : 'Unlock'}</Text>
+        </Pressable>
+        {error ? <Text style={[validationStyles.error, { color: themeColors.danger }]}>{error}</Text> : null}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function LegacyLockScreen({ app, method, credential, deviceId, setMethod, onUnlock, onClose }: { app: AppItem; method: LockMethod; credential: string; deviceId: string; setMethod: (value: LockMethod) => void; onUnlock: () => void; onClose: () => void }) { const [value, setValue] = useState(''); const [error, setError] = useState(''); const verify = async () => { if (method === 'Fingerprint') { const result = await LocalAuthentication.authenticateAsync({ promptMessage: `Unlock ${app.name}` }); if (result.success) onUnlock(); else setError('Fingerprint verification failed.'); return; } try { const valid = await verifyLockCredential(deviceId, value); if (valid) onUnlock(); else setError(`Incorrect ${method.toLowerCase()}.`); } catch { if (value === credential) onUnlock(); else setError('Unable to verify with the backend.'); } }; return <SafeAreaView style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={screenGuardColors.bg} /><ScrollView contentContainerStyle={styles.lock}><Pressable style={styles.close} onPress={onClose}><Text style={styles.closeText}>×</Text></Pressable><View style={[styles.lockIcon, { backgroundColor: app.color }]}><Text style={styles.lockMark}>{app.mark}</Text></View><Text style={styles.lockTitle}>{app.name} is locked</Text><View style={styles.selector}>{lockMethods.map((option) => <Pressable key={option} style={[styles.selectorItem, method === option && styles.selectorActive]} onPress={() => { setMethod(option); setValue(''); setError(''); }}><Text style={[styles.selectorText, method === option && styles.tealText]}>{option === 'Fingerprint' ? '◉' : option === 'Pattern' ? '⠿' : '••••'} {option}</Text></Pressable>)}</View>{method === 'Fingerprint' ? <Pressable style={styles.fingerprint} onPress={verify}><Text style={styles.fingerprintGlyph}>◉</Text></Pressable> : method === 'Pattern' ? <PatternPad value={value} onChange={setValue} /> : <PinPad value={value} onChange={setValue} />}<Pressable style={styles.verifyButton} onPress={verify}><Text style={styles.tealText}>Verify {method}</Text></Pressable>{error ? <Text style={validationStyles.error}>{error}</Text> : null}<Text style={styles.unlockHint}>{method === 'Fingerprint' ? 'Touch the sensor to unlock' : `Enter your ${method.toLowerCase()} to unlock`}</Text></ScrollView></SafeAreaView>; }
+
+const validationStyles = StyleSheet.create({
+  validation: { padding: 30, paddingTop: 38, paddingBottom: 40 },
+  validationLabel: { color: screenGuardColors.muted, fontSize: 16, marginTop: 20, marginBottom: 10 },
+  error: { color: screenGuardColors.danger, fontSize: 15, marginTop: 16, textAlign: 'center' },
+  disabled: { opacity: 0.45 },
+  fingerprintHero: { alignItems: 'center', marginTop: 18, marginBottom: 24 },
+  biometricOrb: { width: 168, height: 168, borderRadius: 84, alignItems: 'center', justifyContent: 'center', backgroundColor: '#071d32', borderWidth: 1, borderColor: '#1d4960', elevation: 8, shadowColor: screenGuardColors.teal, shadowOpacity: 0.18, shadowRadius: 18, shadowOffset: { width: 0, height: 8 } },
+  biometricOrbActive: { borderColor: screenGuardColors.teal, backgroundColor: '#08303b', transform: [{ scale: 1.04 }] },
+  biometricRingOuter: { position: 'absolute', width: 132, height: 132, borderRadius: 66, borderWidth: 2, borderColor: '#1c5965' },
+  biometricRingInner: { position: 'absolute', width: 92, height: 92, borderRadius: 46, borderWidth: 2, borderColor: screenGuardColors.teal, backgroundColor: '#0a2735' },
+  biometricGlyph: { color: screenGuardColors.teal, fontSize: 48, lineHeight: 54 },
+  biometricLabel: { color: screenGuardColors.teal, fontSize: 12, fontWeight: '800', letterSpacing: 2, marginTop: 18 },
+  biometricButton: { height: 58, borderRadius: 16, backgroundColor: screenGuardColors.teal, alignItems: 'center', justifyContent: 'center', marginHorizontal: 4 },
+  biometricButtonPressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },
+  biometricButtonText: { color: '#021c21', fontSize: 17, fontWeight: '800' },
+  biometricStatus: { flexDirection: 'row', alignItems: 'flex-start', borderWidth: 1, borderColor: '#1b4d59', backgroundColor: '#082631', borderRadius: 16, padding: 15, marginTop: 18 },
+  biometricStatusError: { borderColor: '#713440', backgroundColor: '#2b1722' },
+  biometricStatusDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: screenGuardColors.teal, marginTop: 5, marginRight: 11 },
+  biometricStatusDotError: { backgroundColor: screenGuardColors.danger },
+  biometricStatusCopy: { flex: 1 },
+  biometricStatusTitle: { color: screenGuardColors.text, fontSize: 14, fontWeight: '700', marginBottom: 3 },
+  biometricStatusText: { color: screenGuardColors.muted, fontSize: 13, lineHeight: 19 },
+  patternPad: { width: PATTERN_SIZE, height: PATTERN_SIZE, marginTop: 28, marginBottom: 8, alignSelf: 'center', alignItems: 'center', justifyContent: 'center', borderRadius: 28, borderWidth: 1, borderColor: screenGuardColors.border },
+  patternLine: { position: 'absolute', height: 4, borderRadius: 2 },
+  patternDot: { position: 'absolute', width: PATTERN_DOT_SIZE, height: PATTERN_DOT_SIZE, borderRadius: 29, borderWidth: 2, alignItems: 'center', justifyContent: 'center', elevation: 2 },
+  patternNumber: { fontSize: 17, fontWeight: '800' },
+  pinPad: { width: 270, marginTop: 25, alignSelf: 'center', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  key: { width: 80, height: 58, marginBottom: 10, borderRadius: 12, backgroundColor: screenGuardColors.panel, borderWidth: 1, borderColor: screenGuardColors.border, alignItems: 'center', justifyContent: 'center' },
+  keySelected: { backgroundColor: '#0c3a43', borderColor: screenGuardColors.teal },
+  keyText: { color: screenGuardColors.text, fontSize: 22, fontWeight: '700' },
+  keyTextSelected: { color: screenGuardColors.teal },
+});
+
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: screenGuardColors.bg },
+  fill: { flex: 1 },
+  setup: { padding: 30, paddingTop: 42, paddingBottom: 20 },
+  home: { padding: 30, paddingTop: 65, flexGrow: 1 },
+  homePanel: { backgroundColor: screenGuardColors.panel, borderRadius: 18, borderWidth: 1, borderColor: screenGuardColors.border, padding: 18, marginVertical: 12 },
+  list: { padding: 20, paddingBottom: 110 },
+  appsHero: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: screenGuardColors.panel, borderRadius: 20, borderWidth: 1, borderColor: screenGuardColors.border, padding: 18, marginBottom: 16 },
+  appsHeroCopy: { flex: 1, paddingRight: 14 },
+  appsHeroTitle: { color: screenGuardColors.text, fontSize: 23, fontWeight: '800' },
+  appsHeroSubtitle: { color: screenGuardColors.muted, fontSize: 13, lineHeight: 19, marginTop: 5 },
+  appsCountBadge: { minWidth: 62, height: 62, borderRadius: 18, backgroundColor: '#08303a', borderWidth: 1, borderColor: '#1b5963', alignItems: 'center', justifyContent: 'center' },
+  appsCountValue: { color: screenGuardColors.teal, fontSize: 23, lineHeight: 26, fontWeight: '800' },
+  appsCountLabel: { color: screenGuardColors.muted, fontSize: 10, fontWeight: '700', marginTop: 1 },
+  searchWrap: { height: 52, borderRadius: 15, borderWidth: 1, borderColor: screenGuardColors.border, backgroundColor: screenGuardColors.panel, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14 },
+  searchGlyph: { color: screenGuardColors.teal, fontSize: 25, marginRight: 8, marginTop: -3 },
+  listLabel: { color: screenGuardColors.muted, fontSize: 13, fontWeight: '600', marginTop: 15, marginBottom: 10, paddingHorizontal: 3 },
+  appListCard: { backgroundColor: screenGuardColors.panel, borderRadius: 20, borderWidth: 1, borderColor: screenGuardColors.border, padding: 7 },
+  appListRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 15, borderWidth: 1, borderColor: 'transparent', paddingHorizontal: 10, paddingVertical: 8, marginVertical: 3 },
+  appListRowLocked: { backgroundColor: '#082a32', borderColor: '#15515a' },
+  appState: { color: screenGuardColors.muted, fontSize: 12, marginTop: 3 },
+  emptyState: { minHeight: 150, borderRadius: 20, borderWidth: 1, borderColor: screenGuardColors.border, backgroundColor: screenGuardColors.panel, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  emptyTitle: { color: screenGuardColors.text, fontSize: 18, fontWeight: '700', marginBottom: 4 },
+  activity: { padding: 30, paddingBottom: 110 },
+  lock: { padding: 30, paddingTop: 60, alignItems: 'center', minHeight: '100%' },
+  hero: { color: screenGuardColors.teal, fontSize: 52, marginBottom: 12 },
+  title: { color: screenGuardColors.text, fontSize: 31, fontWeight: '700' },
+  subtitle: { color: screenGuardColors.muted, fontSize: 19, marginTop: 12 },
+  progress: { height: 7, backgroundColor: '#26344b', borderRadius: 5, marginVertical: 25 },
+  progressFill: { width: '50%', height: '100%', backgroundColor: screenGuardColors.teal, borderRadius: 5 },
+  methodCard: { minHeight: 130, borderRadius: 20, borderWidth: 1, borderColor: screenGuardColors.border, backgroundColor: screenGuardColors.panel, marginBottom: 16, padding: 20, flexDirection: 'row', alignItems: 'center' },
+  activeCard: { borderColor: screenGuardColors.teal, backgroundColor: '#07303b' },
+  bigIcon: { width: 62, height: 62, borderRadius: 34, backgroundColor: '#243044', color: screenGuardColors.text, fontSize: 27, textAlign: 'center', textAlignVertical: 'center' },
+  methodCopy: { flex: 1, paddingHorizontal: 18 },
+  methodTitle: { color: screenGuardColors.text, fontSize: 21, fontWeight: '700' },
+  methodDescription: { color: screenGuardColors.muted, fontSize: 16, marginTop: 7 },
+  recommended: { color: screenGuardColors.teal, fontSize: 13 },
+  radio: { width: 27, height: 27, borderRadius: 20, borderWidth: 2, borderColor: screenGuardColors.muted },
+  radioOn: { borderColor: screenGuardColors.teal, backgroundColor: screenGuardColors.teal },
+  note: { color: screenGuardColors.muted, fontSize: 16, marginTop: 8 },
+  continue: { height: 64, borderWidth: 1.5, borderColor: screenGuardColors.teal, borderRadius: 17, margin: 30, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' },
+  tealText: { color: screenGuardColors.teal, fontWeight: '700', fontSize: 18 },
+  arrow: { position: 'absolute', right: 20, color: screenGuardColors.teal, fontSize: 30 },
+  bottom: { height: 100, borderTopWidth: 1, borderTopColor: screenGuardColors.border, backgroundColor: screenGuardColors.bg, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', paddingBottom: 25 },
+  nav: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  navIcon: { fontSize: 26, color: screenGuardColors.muted },
+  navLabel: { marginTop: 2, color: screenGuardColors.muted, fontSize: 12 },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 18, paddingBottom: 8 },
+  pageTitle: { color: screenGuardColors.text, fontSize: 25, fontWeight: '700' },
+  settingsButton: { width: 42, height: 42, borderRadius: 21, borderWidth: 1, borderColor: screenGuardColors.border, backgroundColor: screenGuardColors.panel, alignItems: 'center', justifyContent: 'center' },
+  settingsGlyph: { color: '#fff', fontSize: 22 },
+  settingsPage: { padding: 20, paddingBottom: 40 },
+  settingsHeader: { marginBottom: 18 },
+  settingsCard: { backgroundColor: screenGuardColors.panel, borderRadius: 18, borderWidth: 1, borderColor: screenGuardColors.border, padding: 14, marginBottom: 18 },
+  settingsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, paddingHorizontal: 6, borderBottomWidth: 1, borderBottomColor: screenGuardColors.border },
+  resetButton: { minHeight: 48, borderWidth: 1, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 14, paddingHorizontal: 16 },
+  resetButtonText: { fontSize: 16, fontWeight: '700' },
+  count: { marginTop: 16, marginBottom: 10 },
+  countText: { color: screenGuardColors.muted, fontSize: 15 },
+  search: { flex: 1, height: '100%', color: screenGuardColors.text, fontSize: 15, paddingHorizontal: 0, paddingVertical: 0 },
+  package: { color: screenGuardColors.muted, fontSize: 16, marginTop: 12 },
+  appRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: screenGuardColors.border },
+  appContent: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  appIcon: { width: 48, height: 48, borderRadius: 14, marginRight: 12, backgroundColor: screenGuardColors.border },
+  appCopy: { flex: 1, minWidth: 0 },
+  appName: { color: screenGuardColors.text, fontSize: 16, fontWeight: '700' },
+  statusBadge: { fontSize: 12, fontWeight: '700', borderRadius: 10, overflow: 'hidden', paddingHorizontal: 9, paddingVertical: 5, marginLeft: 10 },
+  statusBadgeLocked: { color: '#021c21', backgroundColor: screenGuardColors.teal },
+  statusBadgeUnlocked: { color: screenGuardColors.muted, backgroundColor: screenGuardColors.border },
+  switch: { width: 54, height: 32, borderRadius: 16, backgroundColor: '#243044', justifyContent: 'center', paddingHorizontal: 4 },
+  switchOn: { backgroundColor: screenGuardColors.teal },
+  thumb: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#eaf2ff', marginLeft: 2 },
+  thumbOn: { marginLeft: 28 },
+  header: { marginBottom: 18 },
+  stats: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 18 },
+  stat: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  statIcon: { fontSize: 26, marginRight: 12, color: screenGuardColors.teal },
+  statValue: { color: screenGuardColors.text, fontSize: 28, fontWeight: '700' },
+  statLabel: { color: screenGuardColors.muted, fontSize: 14 },
+  chartPanel: { backgroundColor: screenGuardColors.panel, borderRadius: 18, borderWidth: 1, borderColor: screenGuardColors.border, padding: 18 },
+  sectionTitle: { color: screenGuardColors.text, fontSize: 18, fontWeight: '700', marginBottom: 12 },
+  activityRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
+  activityIcon: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
+  appMark: { color: screenGuardColors.text, fontSize: 18, fontWeight: '700' },
+  link: { color: screenGuardColors.teal, fontSize: 15, fontWeight: '600' },
+  close: { alignSelf: 'flex-end', marginBottom: 12 },
+  closeText: { color: screenGuardColors.text, fontSize: 32 },
+  lockIcon: { width: 72, height: 72, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
+  lockMark: { color: '#fff', fontSize: 28, fontWeight: '700' },
+  lockTitle: { color: screenGuardColors.text, fontSize: 24, fontWeight: '700', marginBottom: 20, textAlign: 'center' },
+  selector: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', marginBottom: 20 },
+  selectorItem: { borderWidth: 1, borderColor: screenGuardColors.border, backgroundColor: screenGuardColors.panel, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, margin: 4 },
+  selectorActive: { borderColor: screenGuardColors.teal },
+  selectorText: { color: screenGuardColors.text, fontSize: 15 },
+  verifyButton: { width: '100%', borderWidth: 1.5, borderColor: screenGuardColors.teal, borderRadius: 16, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
+  fingerprint: { width: 90, height: 90, borderRadius: 45, backgroundColor: screenGuardColors.panel, borderWidth: 1, borderColor: screenGuardColors.border, alignItems: 'center', justifyContent: 'center', marginTop: 24 },
+  fingerprintGlyph: { color: screenGuardColors.teal, fontSize: 42 },
+  unlockHint: { color: screenGuardColors.muted, fontSize: 16, marginTop: 12, textAlign: 'center' },
+  primary: { marginTop: 18, backgroundColor: screenGuardColors.panel, borderRadius: 16, borderWidth: 1, borderColor: screenGuardColors.border, padding: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  infoCard: { marginTop: 18, backgroundColor: screenGuardColors.panel, borderRadius: 16, borderWidth: 1, borderColor: screenGuardColors.border, padding: 16 },
+  infoTitle: { color: screenGuardColors.text, fontSize: 16, fontWeight: '700', marginBottom: 6 },
+  infoText: { color: screenGuardColors.muted, fontSize: 14, lineHeight: 20 },
+  eyebrow: { color: screenGuardColors.teal, fontSize: 13, letterSpacing: 2, marginBottom: 8, fontWeight: '700' },
+  headerText: { color: screenGuardColors.text, fontSize: 20, fontWeight: '700' },
+});;
 
