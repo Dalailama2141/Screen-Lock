@@ -118,7 +118,7 @@ public class InstalledAppsModule extends ReactContextBaseJavaModule {
         try {
             Intent intent = null;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                Intent detailsIntent = new Intent(Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS);
+                Intent detailsIntent = new Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS");
                 detailsIntent.putExtra("android.extra.ComponentName", new ComponentName(getReactApplicationContext(), AppLockAccessibilityService.class));
                 if (detailsIntent.resolveActivity(getReactApplicationContext().getPackageManager()) != null) {
                     intent = detailsIntent;
