@@ -1,5 +1,8 @@
 package com.screenguard;
 
+import android.app.usage.UsageEvents;
+import android.app.usage.UsageStatsManager;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
@@ -23,14 +26,26 @@ import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
 
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Comparator;
+import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.io.ByteArrayOutputStream;
-import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class InstalledAppsModule extends ReactContextBaseJavaModule {
+    private static final long DAY_MS = 86400000L;
+    private static final ExecutorService usageExecutor = Executors.newSingleThreadExecutor();
+
     public InstalledAppsModule(ReactApplicationContext context) {
         super(context);
     }
@@ -165,6 +180,7 @@ public class InstalledAppsModule extends ReactContextBaseJavaModule {
             } else {
                 getReactApplicationContext().startService(intent);
             }
+            AppLockStorage.setProtectionEnabled(getReactApplicationContext(), true);
             promise.resolve(null);
         } catch (Exception error) {
             promise.reject("PROTECTION_START_ERROR", "Unable to start app protection", error);
@@ -176,6 +192,7 @@ public class InstalledAppsModule extends ReactContextBaseJavaModule {
         try {
             Intent intent = new Intent(getReactApplicationContext(), AppLockMonitorService.class);
             getReactApplicationContext().stopService(intent);
+            AppLockStorage.setProtectionEnabled(getReactApplicationContext(), false);
             promise.resolve(null);
         } catch (Exception error) {
             promise.reject("PROTECTION_STOP_ERROR", "Unable to stop app protection", error);
@@ -222,6 +239,128 @@ public class InstalledAppsModule extends ReactContextBaseJavaModule {
             promise.resolve(null);
         } catch (Exception error) {
             promise.reject("PROTECTED_APPS_ERROR", "Unable to save protected apps", error);
+        }
+    }
+
+    private static void addUsageInterval(Map<String, long[]> totals, String packageName, long start, long end, long rangeStart, int dayCount) {
+        if (end <= start) return;
+        long cursor = Math.max(start, rangeStart);
+        long boundedEnd = end;
+        while (cursor < boundedEnd) {
+            int dayIndex = (int) ((cursor - rangeStart) / DAY_MS);
+            if (dayIndex < 0 || dayIndex >= dayCount) break;
+            long dayEnd = rangeStart + ((long) (dayIndex + 1) * DAY_MS);
+            long segmentEnd = Math.min(boundedEnd, dayEnd);
+            long[] daily = totals.get(packageName);
+            if (daily != null) daily[dayIndex] += Math.max(0L, segmentEnd - cursor);
+            cursor = segmentEnd;
+        }
+    }
+
+    @ReactMethod
+    public void getAppUsage(double days, Promise promise) {
+        usageExecutor.execute(() -> {
+            try {
+                int dayCount = (int) Math.max(1, Math.min(30, days));
+                UsageStatsManager usageStatsManager = (UsageStatsManager) getReactApplicationContext().getSystemService(Context.USAGE_STATS_SERVICE);
+                WritableArray result = Arguments.createArray();
+                if (usageStatsManager == null || !AppLockStorage.hasUsageAccess(getReactApplicationContext())) {
+                    promise.resolve(result);
+                    return;
+                }
+
+                Calendar calendar = Calendar.getInstance();
+                calendar.set(Calendar.HOUR_OF_DAY, 0);
+                calendar.set(Calendar.MINUTE, 0);
+                calendar.set(Calendar.SECOND, 0);
+                calendar.set(Calendar.MILLISECOND, 0);
+                long rangeEnd = System.currentTimeMillis();
+                long rangeStart = calendar.getTimeInMillis() - ((long) (dayCount - 1) * DAY_MS);
+
+                Map<String, long[]> totals = new HashMap<>();
+                Map<String, Long> resumedAt = new HashMap<>();
+                Set<String> trackedPackages = new HashSet<>();
+
+                int resumedType = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                        ? UsageEvents.Event.ACTIVITY_RESUMED
+                        : UsageEvents.Event.MOVE_TO_FOREGROUND;
+                int pausedType = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                        ? UsageEvents.Event.ACTIVITY_PAUSED
+                        : UsageEvents.Event.MOVE_TO_BACKGROUND;
+
+                UsageEvents.Event event = new UsageEvents.Event();
+                UsageEvents usageEvents = usageStatsManager.queryEvents(rangeStart, rangeEnd);
+                while (usageEvents.hasNextEvent()) {
+                    usageEvents.getNextEvent(event);
+                    String packageName = event.getPackageName() == null ? null : event.getPackageName().toString();
+                    if (packageName == null) continue;
+                    if (!trackedPackages.contains(packageName)) {
+                        trackedPackages.add(packageName);
+                        totals.put(packageName, new long[dayCount]);
+                    }
+
+                    if (event.getEventType() == resumedType) {
+                        resumedAt.put(packageName, event.getTimeStamp());
+                    } else if (event.getEventType() == pausedType) {
+                        Long startedAt = resumedAt.remove(packageName);
+                        if (startedAt != null) {
+                            addUsageInterval(totals, packageName, startedAt, event.getTimeStamp(), rangeStart, dayCount);
+                        }
+                    }
+                }
+
+                for (Map.Entry<String, Long> entry : resumedAt.entrySet()) {
+                    addUsageInterval(totals, entry.getKey(), entry.getValue(), rangeEnd, rangeStart, dayCount);
+                }
+
+                List<String> sortedPackages = new ArrayList<>(trackedPackages);
+                sortedPackages.sort(Comparator.comparingLong((String packageName) -> {
+                    long[] values = totals.get(packageName);
+                    long sum = 0;
+                    if (values != null) for (long value : values) sum += value;
+                    return sum;
+                }).reversed());
+
+                SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+                for (String packageName : sortedPackages) {
+                    long[] values = totals.get(packageName);
+                    WritableMap appUsage = Arguments.createMap();
+                    appUsage.putString("packageName", packageName);
+                    long totalMillis = 0;
+                    WritableArray daily = Arguments.createArray();
+                    for (int dayIndex = 0; dayIndex < dayCount; dayIndex++) {
+                        long value = values == null ? 0L : values[dayIndex];
+                        totalMillis += value;
+                        WritableMap day = Arguments.createMap();
+                        day.putString("date", dateFormat.format(new Date(rangeStart + ((long) dayIndex * DAY_MS))));
+                        day.putDouble("millis", value);
+                        daily.pushMap(day);
+                    }
+                    appUsage.putDouble("totalMillis", totalMillis);
+                    appUsage.putArray("daily", daily);
+                    result.pushMap(appUsage);
+                }
+
+                promise.resolve(result);
+            } catch (Exception error) {
+                promise.reject("USAGE_STATS_ERROR", "Unable to read app usage statistics", error);
+            }
+        });
+    }
+
+    @ReactMethod
+    public void clearSessionUnlock(Promise promise) {
+        AppLockStorage.setSessionUnlocked(getReactApplicationContext(), false);
+        promise.resolve(null);
+    }
+
+    @ReactMethod
+    public void getAppIcon(String packageName, Promise promise) {
+        try {
+            Drawable icon = getReactApplicationContext().getPackageManager().getApplicationIcon(packageName);
+            promise.resolve(getIconDataUri(icon));
+        } catch (Exception error) {
+            promise.resolve("");
         }
     }
 

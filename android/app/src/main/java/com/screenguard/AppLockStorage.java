@@ -15,6 +15,8 @@ final class AppLockStorage {
     private static final String PREFERENCES_NAME = "screen_guard_app_lock";
     private static final String KEY_PROTECTED_PACKAGES = "protected_packages";
     private static final String KEY_PENDING_PACKAGE = "pending_package";
+    private static final String KEY_PROTECTION_ENABLED = "protection_enabled";
+    private static final String KEY_SESSION_UNLOCKED = "session_unlocked";
     private static final String TEMPORARY_UNLOCK_PREFIX = "temporary_unlock_";
 
     private AppLockStorage() {
@@ -101,5 +103,21 @@ final class AppLockStorage {
 
     static boolean isProtectionActive() {
         return AppLockMonitorService.isRunning();
+    }
+
+    static void setSessionUnlocked(Context context, boolean unlocked) {
+        preferences(context).edit().putBoolean(KEY_SESSION_UNLOCKED, unlocked).apply();
+    }
+
+    static boolean isSessionUnlocked(Context context) {
+        return preferences(context).getBoolean(KEY_SESSION_UNLOCKED, false);
+    }
+
+    static void setProtectionEnabled(Context context, boolean enabled) {
+        preferences(context).edit().putBoolean(KEY_PROTECTION_ENABLED, enabled).apply();
+    }
+
+    static boolean isProtectionEnabled(Context context) {
+        return preferences(context).getBoolean(KEY_PROTECTION_ENABLED, false);
     }
 }
