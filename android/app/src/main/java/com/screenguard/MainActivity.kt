@@ -28,9 +28,9 @@ class MainActivity : ReactActivity() {
   }
 
   private fun captureLockIntent(intent: Intent?) {
-    val packageName = intent?.getStringExtra(AppLockAccessibilityService.EXTRA_LOCKED_PACKAGE)
+    val packageName = intent?.getStringExtra(AppLockMonitorService.EXTRA_LOCKED_PACKAGE)
     AppLockStorage.setPendingPackage(this, packageName)
-    intent?.removeExtra(AppLockAccessibilityService.EXTRA_LOCKED_PACKAGE)
+    intent?.removeExtra(AppLockMonitorService.EXTRA_LOCKED_PACKAGE)
   }
 
   /**

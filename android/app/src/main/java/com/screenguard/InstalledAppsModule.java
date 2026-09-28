@@ -1,6 +1,5 @@
 package com.screenguard;
 
-import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
@@ -8,6 +7,7 @@ import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
+import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
 import android.util.Base64;
@@ -109,29 +109,102 @@ public class InstalledAppsModule extends ReactContextBaseJavaModule {
     }
 
     @ReactMethod
-    public void isAppLockAccessibilityEnabled(Promise promise) {
-        promise.resolve(AppLockStorage.isAccessibilityServiceEnabled(getReactApplicationContext()));
+    public void getAppLockPermissionStatus(Promise promise) {
+        try {
+            WritableMap status = Arguments.createMap();
+            status.putBoolean("overlay", AppLockStorage.canDrawOverlays(getReactApplicationContext()));
+            status.putBoolean("usageAccess", AppLockStorage.hasUsageAccess(getReactApplicationContext()));
+            status.putBoolean("protectionActive", AppLockStorage.isProtectionActive());
+            promise.resolve(status);
+        } catch (Exception error) {
+            promise.reject("PERMISSION_STATUS_ERROR", "Unable to read app lock permission status", error);
+        }
     }
 
     @ReactMethod
-    public void openAppLockAccessibilitySettings(Promise promise) {
+    public void openOverlaySettings(Promise promise) {
         try {
-            Intent intent = null;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                Intent detailsIntent = new Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS");
-                detailsIntent.putExtra("android.extra.ComponentName", new ComponentName(getReactApplicationContext(), AppLockAccessibilityService.class));
-                if (detailsIntent.resolveActivity(getReactApplicationContext().getPackageManager()) != null) {
-                    intent = detailsIntent;
-                }
-            }
-            if (intent == null) {
-                intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
-            }
+            Intent intent = new Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getReactApplicationContext().getPackageName())
+            );
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             getReactApplicationContext().startActivity(intent);
             promise.resolve(null);
         } catch (Exception error) {
-            promise.reject("ACCESSIBILITY_SETTINGS_ERROR", "Unable to open accessibility settings", error);
+            promise.reject("OVERLAY_SETTINGS_ERROR", "Unable to open display over other apps settings", error);
+        }
+    }
+
+    @ReactMethod
+    public void openUsageAccessSettings(Promise promise) {
+        try {
+            Intent intent = new Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getReactApplicationContext().startActivity(intent);
+            promise.resolve(null);
+        } catch (Exception error) {
+            promise.reject("USAGE_SETTINGS_ERROR", "Unable to open usage access settings", error);
+        }
+    }
+
+    @ReactMethod
+    public void startAppLockProtection(Promise promise) {
+        try {
+            if (!AppLockStorage.canDrawOverlays(getReactApplicationContext())) {
+                promise.reject("OVERLAY_PERMISSION_REQUIRED", "Display over other apps permission is required");
+                return;
+            }
+            if (!AppLockStorage.hasUsageAccess(getReactApplicationContext())) {
+                promise.reject("USAGE_ACCESS_REQUIRED", "Usage access permission is required");
+                return;
+            }
+            Intent intent = new Intent(getReactApplicationContext(), AppLockMonitorService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                getReactApplicationContext().startForegroundService(intent);
+            } else {
+                getReactApplicationContext().startService(intent);
+            }
+            promise.resolve(null);
+        } catch (Exception error) {
+            promise.reject("PROTECTION_START_ERROR", "Unable to start app protection", error);
+        }
+    }
+
+    @ReactMethod
+    public void stopAppLockProtection(Promise promise) {
+        try {
+            Intent intent = new Intent(getReactApplicationContext(), AppLockMonitorService.class);
+            getReactApplicationContext().stopService(intent);
+            promise.resolve(null);
+        } catch (Exception error) {
+            promise.reject("PROTECTION_STOP_ERROR", "Unable to stop app protection", error);
+        }
+    }
+
+    @ReactMethod
+    public void hideLockOverlay(Promise promise) {
+        AppLockMonitorService.hideOverlay();
+        promise.resolve(null);
+    }
+
+    @ReactMethod
+    public void dismissLockOverlay(Promise promise) {
+        AppLockMonitorService.dismissAndGoHome(getReactApplicationContext());
+        promise.resolve(null);
+    }
+
+    @ReactMethod
+    public void openProtectedApp(String packageName, double durationMs, Promise promise) {
+        try {
+            AppLockMonitorService.allowAndLaunch(
+                    getReactApplicationContext(),
+                    packageName,
+                    Math.max(1000L, (long) durationMs)
+            );
+            promise.resolve(null);
+        } catch (Exception error) {
+            promise.reject("PROTECTED_APP_LAUNCH_ERROR", "Unable to open the protected app", error);
         }
     }
 

@@ -1,8 +1,10 @@
 package com.screenguard;
 
-import android.content.ComponentName;
+import android.app.AppOpsManager;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Build;
+import android.os.Process;
 import android.provider.Settings;
 import android.text.TextUtils;
 
@@ -73,18 +75,31 @@ final class AppLockStorage {
         return true;
     }
 
-    static boolean isAccessibilityServiceEnabled(Context context) {
-        String enabledServices = Settings.Secure.getString(
-                context.getContentResolver(),
-                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        );
-        if (TextUtils.isEmpty(enabledServices)) return false;
+    static boolean canDrawOverlays(Context context) {
+        return Settings.canDrawOverlays(context);
+    }
 
-        ComponentName service = new ComponentName(context, AppLockAccessibilityService.class);
-        for (String entry : enabledServices.split(":")) {
-            ComponentName enabled = ComponentName.unflattenFromString(entry);
-            if (service.equals(enabled)) return true;
+    static boolean hasUsageAccess(Context context) {
+        AppOpsManager appOpsManager = (AppOpsManager) context.getSystemService(Context.APP_OPS_SERVICE);
+        if (appOpsManager == null) return false;
+        int mode;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            mode = appOpsManager.checkOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    Process.myUid(),
+                    context.getPackageName()
+            );
+        } else {
+            mode = appOpsManager.unsafeCheckOpNoThrow(
+                    AppOpsManager.OPSTR_GET_USAGE_STATS,
+                    Process.myUid(),
+                    context.getPackageName()
+            );
         }
-        return false;
+        return mode == AppOpsManager.MODE_ALLOWED;
+    }
+
+    static boolean isProtectionActive() {
+        return AppLockMonitorService.isRunning();
     }
 }

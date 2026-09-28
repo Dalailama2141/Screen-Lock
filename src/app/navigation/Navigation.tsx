@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, Image, ImageBackground, PanResponder, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
-import { allowAppTemporarily, consumePendingLockPackage, getNativeProtectedApps, isAppLockAccessibilityEnabled, openAppLockAccessibilitySettings, setNativeProtectedApps } from '../../services/native/appLock';
+import { consumePendingLockPackage, dismissLockOverlay, getAppLockPermissionStatus, getNativeProtectedApps, hideLockOverlay, openOverlaySettings, openProtectedApp, openUsageAccessSettings, setNativeProtectedApps, startAppLockProtection, stopAppLockProtection } from '../../services/native/appLock';
 import { getInstalledApps, launchInstalledApp } from '../../services/native/installedApps';
 import { deleteLockCredential, getLockSettings } from '../../services/api';
 import { createLocalLockCredential, deleteLocalLockCredential, getLocalLockMethod, hasLocalLockCredential, verifyLocalLockCredential } from '../../services/lockCredentials';
@@ -87,8 +87,11 @@ export function Navigation() {
   const [pickingWallpaperPackage, setPickingWallpaperPackage] = useState<string | null>(null);
   const [resettingPassword, setResettingPassword] = useState(false);
   const [remoteSyncAvailable, setRemoteSyncAvailable] = useState<boolean | null>(null);
-  const [accessibilityEnabled, setAccessibilityEnabled] = useState(false);
+  const [overlayPermission, setOverlayPermission] = useState(false);
+  const [usageAccessGranted, setUsageAccessGranted] = useState(false);
+  const [protectionActive, setProtectionActive] = useState(false);
   const [pendingLockedPackage, setPendingLockedPackage] = useState<string | null>(null);
+  const [lockTriggeredBySystem, setLockTriggeredBySystem] = useState(false);
   const appsRef = useRef<AppItem[]>([]);
   const themeColors = themePalettes[theme];
   const wallpaperColors = wallpaperPalettes[wallpaper];
@@ -158,10 +161,12 @@ export function Navigation() {
   useEffect(() => {
     const syncNativeState = async () => {
       try {
-        const enabled = await isAppLockAccessibilityEnabled();
+        const status = await getAppLockPermissionStatus();
         const pendingPackage = await consumePendingLockPackage();
         if (pendingPackage) setPendingLockedPackage(pendingPackage);
-        setAccessibilityEnabled(enabled);
+        setOverlayPermission(status.overlay);
+        setUsageAccessGranted(status.usageAccess);
+        setProtectionActive(status.protectionActive);
       } catch (error) {
         console.error('Unable to read native app lock state', error);
       }
@@ -179,8 +184,13 @@ export function Navigation() {
     const app = appsRef.current.find((item) => item.packageName === pendingLockedPackage);
     if (!app) return;
     setLockedApp({ ...app, locked: true });
+    setLockTriggeredBySystem(true);
     setPendingLockedPackage(null);
   }, [pendingLockedPackage, apps.length]);
+
+  useEffect(() => {
+    if (lockedApp) void hideLockOverlay();
+  }, [lockedApp]);
 
   useEffect(() => {
     const loadLockSettings = async () => {
@@ -306,17 +316,43 @@ export function Navigation() {
     );
   };
 
-  const openProtectionSettings = async () => {
+  const openOverlayPermissionSettings = async () => {
     try {
-      await openAppLockAccessibilitySettings();
+      await openOverlaySettings();
     } catch (error) {
-      Alert.alert('Unable to open settings', error instanceof Error ? error.message : 'Please enable Screen Guard App Lock manually.');
+      Alert.alert('Unable to open settings', error instanceof Error ? error.message : 'Enable Display over other apps manually.');
+    }
+  };
+
+  const openUsagePermissionSettings = async () => {
+    try {
+      await openUsageAccessSettings();
+    } catch (error) {
+      Alert.alert('Unable to open settings', error instanceof Error ? error.message : 'Enable Usage access manually.');
+    }
+  };
+
+  const toggleProtection = async () => {
+    try {
+      if (protectionActive) {
+        await stopAppLockProtection();
+        setProtectionActive(false);
+      } else {
+        await startAppLockProtection();
+        setProtectionActive(true);
+      }
+    } catch (error) {
+      Alert.alert('Unable to start protection', error instanceof Error ? error.message : 'Please grant both permissions first.');
+      const status = await getAppLockPermissionStatus();
+      setOverlayPermission(status.overlay);
+      setUsageAccessGranted(status.usageAccess);
+      setProtectionActive(status.protectionActive);
     }
   };
 
   const testAppLockProtection = async () => {
-    if (!accessibilityEnabled) {
-      Alert.alert('Enable system protection first', 'Turn on Screen Guard App Lock in Android accessibility settings, then run the test again.');
+    if (!protectionActive) {
+      Alert.alert('Start protection first', 'Grant Display over other apps and Usage access, then turn protection on.');
       return;
     }
     const app = appsRef.current.find((item) => item.locked);
@@ -347,14 +383,14 @@ export function Navigation() {
       case 'Activity':
         return <ActivityScreen apps={apps} themeColors={themeColors} />;
       case 'Settings':
-        return <SettingsScreen method={method} theme={theme} setTheme={setTheme} wallpaper={wallpaper} setWallpaper={setWallpaper} themeColors={themeColors} backgroundColor={appBackgroundColor} lockedApps={apps.filter((app) => app.locked)} appWallpapers={appWallpapers} pickingWallpaperPackage={pickingWallpaperPackage} onSelectWallpaper={selectAppWallpaper} onRemoveWallpaper={removeAppWallpaper} remoteSyncAvailable={remoteSyncAvailable} accessibilityEnabled={accessibilityEnabled} onOpenProtectionSettings={openProtectionSettings} onTestProtection={() => { void testAppLockProtection(); }} resettingPassword={resettingPassword} onResetPassword={confirmPasswordReset} onBack={() => setTab('Home')} />;
+        return <SettingsScreen method={method} theme={theme} setTheme={setTheme} wallpaper={wallpaper} setWallpaper={setWallpaper} themeColors={themeColors} backgroundColor={appBackgroundColor} lockedApps={apps.filter((app) => app.locked)} appWallpapers={appWallpapers} pickingWallpaperPackage={pickingWallpaperPackage} onSelectWallpaper={selectAppWallpaper} onRemoveWallpaper={removeAppWallpaper} remoteSyncAvailable={remoteSyncAvailable} overlayPermission={overlayPermission} usageAccessGranted={usageAccessGranted} protectionActive={protectionActive} onOpenOverlaySettings={openOverlayPermissionSettings} onOpenUsageSettings={openUsagePermissionSettings} onToggleProtection={toggleProtection} onTestProtection={() => { void testAppLockProtection(); }} resettingPassword={resettingPassword} onResetPassword={confirmPasswordReset} onBack={() => setTab('Home')} />;
       case 'Home':
       default:
-        return <AppsScreen apps={visibleApps} totalCount={apps.length} lockedCount={lockedCount} loading={loadingApps} search={search} setSearch={setSearch} themeColors={themeColors} accessibilityEnabled={accessibilityEnabled} onEnableProtection={openProtectionSettings} onTestProtection={() => { void testAppLockProtection(); }} onToggle={toggleApp} onOpen={setLockedApp} />;
+        return <AppsScreen apps={visibleApps} totalCount={apps.length} lockedCount={lockedCount} loading={loadingApps} search={search} setSearch={setSearch} themeColors={themeColors} overlayPermission={overlayPermission} usageAccessGranted={usageAccessGranted} protectionActive={protectionActive} onOpenOverlaySettings={openOverlayPermissionSettings} onOpenUsageSettings={openUsagePermissionSettings} onToggleProtection={toggleProtection} onTestProtection={() => { void testAppLockProtection(); }} onToggle={toggleApp} onOpen={(app) => { setLockTriggeredBySystem(false); setLockedApp(app); }} />;
     }
   };
 
-  if (lockedApp) return <LockScreen app={lockedApp} method={method} themeColors={themeColors} wallpaperUri={appWallpapers[lockedApp.packageName]} setMethod={setMethod} onUnlock={async () => { try { await allowAppTemporarily(lockedApp.packageName); await launchInstalledApp(lockedApp.packageName); } catch (error) { Alert.alert('Unable to open app', error instanceof Error ? error.message : 'The selected app could not be opened.'); } finally { setLockedApp(null); } }} onClose={() => setLockedApp(null)} />;
+  if (lockedApp) return <LockScreen app={lockedApp} method={method} themeColors={themeColors} wallpaperUri={appWallpapers[lockedApp.packageName]} setMethod={setMethod} onUnlock={async () => { try { await openProtectedApp(lockedApp.packageName); } catch (error) { Alert.alert('Unable to open app', error instanceof Error ? error.message : 'The selected app could not be opened.'); } finally { setLockTriggeredBySystem(false); setLockedApp(null); } }} onClose={() => { if (lockTriggeredBySystem) void dismissLockOverlay(); setLockTriggeredBySystem(false); setLockedApp(null); }} />;
 
   return <SafeAreaView style={[styles.safe, { backgroundColor: appBackgroundColor }]}><StatusBar barStyle={theme === 'Light' ? 'dark-content' : 'light-content'} backgroundColor={appBackgroundColor} />
     <View style={{ flex: 1, backgroundColor: appContentColor }}>
@@ -369,7 +405,7 @@ export function Navigation() {
   </SafeAreaView>;
 }
 
-function SettingsScreen({ method, theme, setTheme, wallpaper, setWallpaper, themeColors, backgroundColor, lockedApps, appWallpapers, pickingWallpaperPackage, onSelectWallpaper, onRemoveWallpaper, remoteSyncAvailable, accessibilityEnabled, onOpenProtectionSettings, onTestProtection, resettingPassword, onResetPassword, onBack }: { method: LockMethod; theme: 'Dark' | 'Light' | 'System'; setTheme: (value: 'Dark' | 'Light' | 'System') => void; wallpaper: 'Night Glow' | 'Ocean' | 'Minimal'; setWallpaper: (value: 'Night Glow' | 'Ocean' | 'Minimal') => void; themeColors: ThemePalette; backgroundColor: string; lockedApps: AppItem[]; appWallpapers: Record<string, string>; pickingWallpaperPackage: string | null; onSelectWallpaper: (app: AppItem) => void; onRemoveWallpaper: (app: AppItem) => void; remoteSyncAvailable: boolean | null; accessibilityEnabled: boolean; onOpenProtectionSettings: () => void; onTestProtection: () => void; resettingPassword: boolean; onResetPassword: () => void; onBack: () => void }) {
+function SettingsScreen({ method, theme, setTheme, wallpaper, setWallpaper, themeColors, backgroundColor, lockedApps, appWallpapers, pickingWallpaperPackage, onSelectWallpaper, onRemoveWallpaper, remoteSyncAvailable, overlayPermission, usageAccessGranted, protectionActive, onOpenOverlaySettings, onOpenUsageSettings, onToggleProtection, onTestProtection, resettingPassword, onResetPassword, onBack }: { method: LockMethod; theme: 'Dark' | 'Light' | 'System'; setTheme: (value: 'Dark' | 'Light' | 'System') => void; wallpaper: 'Night Glow' | 'Ocean' | 'Minimal'; setWallpaper: (value: 'Night Glow' | 'Ocean' | 'Minimal') => void; themeColors: ThemePalette; backgroundColor: string; lockedApps: AppItem[]; appWallpapers: Record<string, string>; pickingWallpaperPackage: string | null; onSelectWallpaper: (app: AppItem) => void; onRemoveWallpaper: (app: AppItem) => void; remoteSyncAvailable: boolean | null; overlayPermission: boolean; usageAccessGranted: boolean; protectionActive: boolean; onOpenOverlaySettings: () => void; onOpenUsageSettings: () => void; onToggleProtection: () => void; onTestProtection: () => void; resettingPassword: boolean; onResetPassword: () => void; onBack: () => void }) {
   const themes: Array<'Dark' | 'Light' | 'System'> = ['Dark', 'Light', 'System'];
   const wallpapers: Array<'Night Glow' | 'Ocean' | 'Minimal'> = ['Night Glow', 'Ocean', 'Minimal'];
 
@@ -410,14 +446,28 @@ function SettingsScreen({ method, theme, setTheme, wallpaper, setWallpaper, them
 
       <View style={[styles.settingsCard, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}> 
         <Text style={[styles.sectionTitle, { color: themeColors.text }]}>App lock protection</Text>
+        <Pressable onPress={onOpenOverlaySettings} style={[styles.settingsRow, { borderBottomColor: themeColors.border }]}>
+          <View>
+            <Text style={[styles.appName, { color: themeColors.text }]}>Display over other apps</Text>
+            <Text style={[styles.appState, { color: themeColors.muted }]}>Required for the lock overlay</Text>
+          </View>
+          <Text style={[styles.link, { color: overlayPermission ? themeColors.teal : themeColors.danger }]}>{overlayPermission ? 'Granted' : 'Grant'}</Text>
+        </Pressable>
+        <Pressable onPress={onOpenUsageSettings} style={[styles.settingsRow, { borderBottomColor: themeColors.border }]}>
+          <View>
+            <Text style={[styles.appName, { color: themeColors.text }]}>Usage access</Text>
+            <Text style={[styles.appState, { color: themeColors.muted }]}>Used to know which app is in front</Text>
+          </View>
+          <Text style={[styles.link, { color: usageAccessGranted ? themeColors.teal : themeColors.danger }]}>{usageAccessGranted ? 'Granted' : 'Grant'}</Text>
+        </Pressable>
         <View style={[styles.settingsRow, { borderBottomColor: themeColors.border }]}>
-          <Text style={[styles.appName, { color: themeColors.text }]}>Screen Guard App Lock</Text>
-          <Text style={[styles.link, { color: accessibilityEnabled ? themeColors.teal : themeColors.danger }]}>{accessibilityEnabled ? 'Enabled' : 'Disabled'}</Text>
+          <Text style={[styles.appName, { color: themeColors.text }]}>Protection monitor</Text>
+          <Text style={[styles.link, { color: protectionActive ? themeColors.teal : themeColors.muted }]}>{protectionActive ? 'Active' : 'Stopped'}</Text>
         </View>
-        <Text style={[styles.infoText, { color: themeColors.muted }]}>Allow the Android accessibility service to detect protected apps when they open from anywhere, including the home screen.</Text>
+        <Text style={[styles.infoText, { color: themeColors.muted }]}>The monitor only reads the current foreground package name so it can show your lock screen. It does not read screen content.</Text>
         <View style={styles.protectionActions}>
-          <Pressable onPress={onOpenProtectionSettings} style={[styles.wallpaperAction, styles.protectionButton, { borderColor: themeColors.teal }]}>
-            <Text style={[styles.wallpaperActionText, { color: themeColors.teal }]}>{accessibilityEnabled ? 'Open system settings' : 'Enable app lock'}</Text>
+          <Pressable disabled={!overlayPermission || !usageAccessGranted} onPress={onToggleProtection} style={[styles.wallpaperAction, styles.protectionButton, (!overlayPermission || !usageAccessGranted) && validationStyles.disabled, { borderColor: themeColors.teal }]}>
+            <Text style={[styles.wallpaperActionText, { color: themeColors.teal }]}>{protectionActive ? 'Stop protection' : 'Start protection'}</Text>
           </Pressable>
           <Pressable onPress={onTestProtection} style={[styles.wallpaperAction, styles.protectionButton, { borderColor: themeColors.border }]}>
             <Text style={[styles.wallpaperActionText, { color: themeColors.muted }]}>Run test</Text>
@@ -538,7 +588,7 @@ function HomeScreen({ lockedCount, onApps }: { lockedCount: number; onApps: () =
     <Pressable style={styles.primary} onPress={onApps}><Text style={styles.tealText}>Manage protected apps</Text><Text style={styles.arrow}>→</Text></Pressable>
   </ScrollView>;
 }
-function AppsScreen({ apps, totalCount, lockedCount, loading, search, setSearch, themeColors, accessibilityEnabled, onEnableProtection, onTestProtection, onToggle, onOpen }: { apps: AppItem[]; totalCount: number; lockedCount: number; loading: boolean; search: string; setSearch: (value: string) => void; themeColors: ThemePalette; accessibilityEnabled: boolean; onEnableProtection: () => void; onTestProtection: () => void; onToggle: (packageName: string) => void; onOpen: (app: AppItem) => void }) {
+function AppsScreen({ apps, totalCount, lockedCount, loading, search, setSearch, themeColors, overlayPermission, usageAccessGranted, protectionActive, onOpenOverlaySettings, onOpenUsageSettings, onToggleProtection, onTestProtection, onToggle, onOpen }: { apps: AppItem[]; totalCount: number; lockedCount: number; loading: boolean; search: string; setSearch: (value: string) => void; themeColors: ThemePalette; overlayPermission: boolean; usageAccessGranted: boolean; protectionActive: boolean; onOpenOverlaySettings: () => void; onOpenUsageSettings: () => void; onToggleProtection: () => void; onTestProtection: () => void; onToggle: (packageName: string) => void; onOpen: (app: AppItem) => void }) {
   return (
     <ScrollView contentContainerStyle={[styles.list, { backgroundColor: themeColors.bg }]} keyboardShouldPersistTaps="handled">
       <View style={[styles.appsHero, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}>
@@ -552,15 +602,31 @@ function AppsScreen({ apps, totalCount, lockedCount, loading, search, setSearch,
         </View>
       </View>
 
-      <View style={[styles.protectionBanner, { backgroundColor: themeColors.panel, borderColor: accessibilityEnabled ? themeColors.teal : themeColors.danger }]}>
+      <View style={[styles.protectionBanner, { backgroundColor: themeColors.panel, borderColor: protectionActive ? themeColors.teal : themeColors.danger }]}>
         <View style={styles.protectionBannerCopy}>
-          <Text style={[styles.protectionBannerTitle, { color: themeColors.text }]}>{accessibilityEnabled ? 'System protection is on' : 'Enable protection before opening apps'}</Text>
-          <Text style={[styles.protectionBannerText, { color: themeColors.muted }]}>{accessibilityEnabled ? 'Protected apps will show your lock screen before opening, even from the home screen.' : 'Android requires you to enable Screen Guard App Lock in system accessibility settings.'}</Text>
+          <Text style={[styles.protectionBannerTitle, { color: themeColors.text }]}>{protectionActive ? 'System protection is on' : 'Finish setup to protect apps'}</Text>
+          <Text style={[styles.protectionBannerText, { color: themeColors.muted }]}>
+            {!overlayPermission
+              ? 'Allow Screen Guard to display over other apps.'
+              : !usageAccessGranted
+                ? 'Allow usage access so Screen Guard knows which app is in front.'
+                : 'Start protection so protected apps require your lock before opening.'}
+          </Text>
         </View>
         <View style={styles.protectionBannerActions}>
-          <Pressable onPress={onEnableProtection} style={[styles.wallpaperAction, { borderColor: themeColors.teal }]}>
-            <Text style={[styles.wallpaperActionText, { color: themeColors.teal }]}>{accessibilityEnabled ? 'Manage' : 'Enable'}</Text>
-          </Pressable>
+          {!overlayPermission ? (
+            <Pressable onPress={onOpenOverlaySettings} style={[styles.wallpaperAction, { borderColor: themeColors.teal }]}>
+              <Text style={[styles.wallpaperActionText, { color: themeColors.teal }]}>Allow overlay</Text>
+            </Pressable>
+          ) : !usageAccessGranted ? (
+            <Pressable onPress={onOpenUsageSettings} style={[styles.wallpaperAction, { borderColor: themeColors.teal }]}>
+              <Text style={[styles.wallpaperActionText, { color: themeColors.teal }]}>Allow usage</Text>
+            </Pressable>
+          ) : (
+            <Pressable onPress={onToggleProtection} style={[styles.wallpaperAction, { borderColor: themeColors.teal }]}>
+              <Text style={[styles.wallpaperActionText, { color: themeColors.teal }]}>{protectionActive ? 'Stop' : 'Start'}</Text>
+            </Pressable>
+          )}
           <Pressable onPress={onTestProtection} style={[styles.wallpaperAction, { borderColor: themeColors.border }]}>
             <Text style={[styles.wallpaperActionText, { color: themeColors.muted }]}>Test</Text>
           </Pressable>
