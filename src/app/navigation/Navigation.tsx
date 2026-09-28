@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Image, PanResponder, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, AppState, Image, ImageBackground, PanResponder, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
+import { allowAppTemporarily, consumePendingLockPackage, getNativeProtectedApps, isAppLockAccessibilityEnabled, openAppLockAccessibilitySettings, setNativeProtectedApps } from '../../services/native/appLock';
 import { getInstalledApps, launchInstalledApp } from '../../services/native/installedApps';
-import { deleteLockCredential, getLockSettings, saveLockCredential, verifyLockCredential } from '../../services/api';
+import { deleteLockCredential, getLockSettings } from '../../services/api';
+import { createLocalLockCredential, deleteLocalLockCredential, getLocalLockMethod, hasLocalLockCredential, verifyLocalLockCredential } from '../../services/lockCredentials';
+import { deleteStoredWallpaper, pickAndStoreWallpaper } from '../../services/wallpapers';
 import type { LockMethod } from '../../types';
 import { screenGuardColors } from '../../theme';
 
@@ -14,9 +17,11 @@ type AppItem = { name: string; packageName: string; icon: string; color: string;
 const lockMethods: LockMethod[] = ['Fingerprint', 'Pattern', 'PIN'];
 const appColors = ['#25d366', '#d6249f', '#4267e8', '#159b9b', '#f5c342', '#2aabee'];
 const CREDENTIAL_METHOD_KEY = '@screen-guard/method';
-const CREDENTIAL_VALUE_KEY = '@screen-guard/credential';
+const LEGACY_CREDENTIAL_VALUE_KEY = '@screen-guard/credential';
 const DEVICE_ID_KEY = '@screen-guard/device-id';
 const SETUP_COMPLETE_KEY = '@screen-guard/setup-complete';
+const APP_WALLPAPERS_KEY = '@screen-guard/app-wallpapers';
+const PROTECTED_APPS_KEY = '@screen-guard/protected-apps';
 
 type ThemePalette = { readonly bg: string; readonly panel: string; readonly border: string; readonly text: string; readonly muted: string; readonly teal: string; readonly danger: string };
 type WallpaperPalette = { readonly bg: string; readonly accent: string; readonly glow: string };
@@ -71,7 +76,6 @@ export function Navigation() {
   const [setupComplete, setSetupComplete] = useState(false);
   const [setupStep, setSetupStep] = useState<SetupStep>('choose');
   const [method, setMethod] = useState<LockMethod>('Fingerprint');
-  const [credential, setCredential] = useState('');
   const [deviceId, setDeviceId] = useState('');
   const [apps, setApps] = useState<AppItem[]>([]);
   const [search, setSearch] = useState('');
@@ -79,14 +83,104 @@ export function Navigation() {
   const [loadingApps, setLoadingApps] = useState(true);
   const [theme, setTheme] = useState<'Dark' | 'Light' | 'System'>('Dark');
   const [wallpaper, setWallpaper] = useState<'Night Glow' | 'Ocean' | 'Minimal'>('Night Glow');
+  const [appWallpapers, setAppWallpapers] = useState<Record<string, string>>({});
+  const [pickingWallpaperPackage, setPickingWallpaperPackage] = useState<string | null>(null);
   const [resettingPassword, setResettingPassword] = useState(false);
+  const [remoteSyncAvailable, setRemoteSyncAvailable] = useState<boolean | null>(null);
+  const [accessibilityEnabled, setAccessibilityEnabled] = useState(false);
+  const [pendingLockedPackage, setPendingLockedPackage] = useState<string | null>(null);
+  const appsRef = useRef<AppItem[]>([]);
   const themeColors = themePalettes[theme];
   const wallpaperColors = wallpaperPalettes[wallpaper];
   const appBackgroundColor = theme === 'Light' ? '#ffffff' : wallpaperColors.bg;
   const appContentColor = theme === 'Light' ? '#ffffff' : wallpaperColors.glow;
   const lockedCount = apps.filter((app) => app.locked).length;
   const visibleApps = useMemo(() => apps.filter((app) => app.name.toLowerCase().includes(search.toLowerCase())), [apps, search]);
-  const toggleApp = (packageName: string) => setApps((current) => current.map((app) => app.packageName === packageName ? { ...app, locked: !app.locked } : app));
+  appsRef.current = apps;
+  const persistProtectedApps = async (items: AppItem[]) => {
+    const packageNames = items.filter((app) => app.locked).map((app) => app.packageName);
+    await AsyncStorage.setItem(PROTECTED_APPS_KEY, JSON.stringify(packageNames));
+    await setNativeProtectedApps(packageNames);
+  };
+
+  const toggleApp = (packageName: string) => setApps((current) => {
+    const next = current.map((app) => app.packageName === packageName ? { ...app, locked: !app.locked } : app);
+    void persistProtectedApps(next);
+    return next;
+  });
+
+  const selectAppWallpaper = async (app: AppItem) => {
+    if (pickingWallpaperPackage) return;
+    setPickingWallpaperPackage(app.packageName);
+
+    try {
+      const uri = await pickAndStoreWallpaper(app.packageName);
+      if (!uri) return;
+
+      const previousUri = appWallpapers[app.packageName];
+      const nextWallpapers = { ...appWallpapers, [app.packageName]: uri };
+      await AsyncStorage.setItem(APP_WALLPAPERS_KEY, JSON.stringify(nextWallpapers));
+      setAppWallpapers(nextWallpapers);
+
+      if (previousUri && previousUri !== uri) {
+        void deleteStoredWallpaper(previousUri);
+      }
+    } catch (error) {
+      Alert.alert('Unable to set wallpaper', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setPickingWallpaperPackage(null);
+    }
+  };
+
+  const removeAppWallpaper = async (app: AppItem) => {
+    const uri = appWallpapers[app.packageName];
+    if (!uri) return;
+
+    const nextWallpapers = { ...appWallpapers };
+    delete nextWallpapers[app.packageName];
+    await AsyncStorage.setItem(APP_WALLPAPERS_KEY, JSON.stringify(nextWallpapers));
+    setAppWallpapers(nextWallpapers);
+    void deleteStoredWallpaper(uri);
+  };
+
+  useEffect(() => {
+    let active = true;
+    AsyncStorage.getItem(APP_WALLPAPERS_KEY)
+      .then((stored) => {
+        if (!active || !stored) return;
+        const parsed = JSON.parse(stored) as Record<string, string>;
+        if (active && parsed && typeof parsed === 'object') setAppWallpapers(parsed);
+      })
+      .catch((error) => console.error('Unable to load app wallpapers', error));
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    const syncNativeState = async () => {
+      try {
+        const enabled = await isAppLockAccessibilityEnabled();
+        const pendingPackage = await consumePendingLockPackage();
+        if (pendingPackage) setPendingLockedPackage(pendingPackage);
+        setAccessibilityEnabled(enabled);
+      } catch (error) {
+        console.error('Unable to read native app lock state', error);
+      }
+    };
+
+    void syncNativeState();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void syncNativeState();
+    });
+    return () => subscription.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!pendingLockedPackage) return;
+    const app = appsRef.current.find((item) => item.packageName === pendingLockedPackage);
+    if (!app) return;
+    setLockedApp({ ...app, locked: true });
+    setPendingLockedPackage(null);
+  }, [pendingLockedPackage, apps.length]);
 
   useEffect(() => {
     const loadLockSettings = async () => {
@@ -97,36 +191,64 @@ export function Navigation() {
           await AsyncStorage.setItem(DEVICE_ID_KEY, storedDeviceId);
         }
         setDeviceId(storedDeviceId);
-        const storedMethod = await AsyncStorage.getItem(CREDENTIAL_METHOD_KEY);
-        const storedCredential = await AsyncStorage.getItem(CREDENTIAL_VALUE_KEY);
-        if (storedMethod) setMethod(storedMethod as LockMethod);
-        if (storedCredential) setCredential(storedCredential);
-        const remoteSettings = await getLockSettings(storedDeviceId);
-        if (remoteSettings) {
-          setMethod(remoteSettings.method);
-          setSetupComplete(true);
-        } else {
-          const localSetupComplete = await AsyncStorage.getItem(SETUP_COMPLETE_KEY);
-          if (localSetupComplete === 'true') {
-            setSetupComplete(true);
+
+        const storedMethod = await AsyncStorage.getItem(CREDENTIAL_METHOD_KEY) as LockMethod | null;
+        const legacyCredential = await AsyncStorage.getItem(LEGACY_CREDENTIAL_VALUE_KEY);
+        let localMethod = await getLocalLockMethod();
+
+        if (legacyCredential) {
+          if (!localMethod && storedMethod) {
+            await createLocalLockCredential(storedMethod, legacyCredential);
+            localMethod = storedMethod;
           }
+          await AsyncStorage.removeItem(LEGACY_CREDENTIAL_VALUE_KEY);
         }
-      } catch (error) {
-        console.error('Unable to load lock settings from backend', error);
-        const localSetupComplete = await AsyncStorage.getItem(SETUP_COMPLETE_KEY);
-        if (localSetupComplete === 'true') {
+
+        if (localMethod) {
+          setMethod(localMethod);
           setSetupComplete(true);
         }
+
+        void getLockSettings(storedDeviceId)
+          .then((remoteSettings) => {
+            setRemoteSyncAvailable(true);
+            if (!localMethod && remoteSettings) setMethod(remoteSettings.method);
+          })
+          .catch(() => setRemoteSyncAvailable(false));
+      } catch (error) {
+        console.error('Unable to load local lock settings', error);
+        setSetupComplete(await hasLocalLockCredential());
       }
     };
-    loadLockSettings();
+    void loadLockSettings();
 
     let active = true;
     getInstalledApps()
-      .then((installedApps) => {
-        if (active) {
-          setApps(installedApps.map(toAppItem));
+      .then(async (installedApps) => {
+        if (!active) return;
+
+        const [storedProtectedApps, nativeProtectedApps] = await Promise.all([
+          AsyncStorage.getItem(PROTECTED_APPS_KEY),
+          getNativeProtectedApps(),
+        ]);
+
+        const protectedPackages = new Set<string>(nativeProtectedApps);
+        if (storedProtectedApps) {
+          try {
+            const parsed = JSON.parse(storedProtectedApps) as string[];
+            if (Array.isArray(parsed)) parsed.forEach((packageName) => protectedPackages.add(packageName));
+          } catch {
+            await AsyncStorage.removeItem(PROTECTED_APPS_KEY);
+          }
         }
+
+        const hydratedApps = installedApps.map((app, index) => ({
+          ...toAppItem(app, index),
+          locked: protectedPackages.has(app.packageName),
+        }));
+
+        setApps(hydratedApps);
+        void setNativeProtectedApps(Array.from(protectedPackages));
       })
       .catch((error) => console.error('Unable to load installed apps', error))
       .finally(() => {
@@ -139,29 +261,32 @@ export function Navigation() {
   }, []);
 
   const finishSetup = async (value: string) => {
-    if (!deviceId) throw new Error('Device identity is not ready');
-    await saveLockCredential(deviceId, method, value);
+    await createLocalLockCredential(method, value);
     await AsyncStorage.setItem(CREDENTIAL_METHOD_KEY, method);
-    await AsyncStorage.setItem(CREDENTIAL_VALUE_KEY, value);
     await AsyncStorage.setItem(SETUP_COMPLETE_KEY, 'true');
-    setCredential(value);
+    await AsyncStorage.removeItem(LEGACY_CREDENTIAL_VALUE_KEY);
     setSetupComplete(true);
     setSetupStep('choose');
   };
 
   const resetPassword = async () => {
-    if (!deviceId || resettingPassword) return;
+    if (resettingPassword) return;
 
     setResettingPassword(true);
     try {
-      await deleteLockCredential(deviceId);
-      await AsyncStorage.multiRemove([CREDENTIAL_METHOD_KEY, CREDENTIAL_VALUE_KEY, SETUP_COMPLETE_KEY]);
-      setCredential('');
+      await deleteLocalLockCredential();
+      await AsyncStorage.multiRemove([CREDENTIAL_METHOD_KEY, LEGACY_CREDENTIAL_VALUE_KEY, SETUP_COMPLETE_KEY]);
       setMethod('Fingerprint');
       setSetupStep('choose');
       setSetupComplete(false);
       setLockedApp(null);
       setTab('Home');
+      setRemoteSyncAvailable(null);
+      if (deviceId) {
+        void deleteLockCredential(deviceId)
+          .then(() => setRemoteSyncAvailable(true))
+          .catch(() => setRemoteSyncAvailable(false));
+      }
       Alert.alert('Password removed', 'Choose Fingerprint, Pattern, or PIN to set a new lock.');
     } catch (error) {
       Alert.alert('Unable to reset password', error instanceof Error ? error.message : 'Please try again.');
@@ -181,6 +306,31 @@ export function Navigation() {
     );
   };
 
+  const openProtectionSettings = async () => {
+    try {
+      await openAppLockAccessibilitySettings();
+    } catch (error) {
+      Alert.alert('Unable to open settings', error instanceof Error ? error.message : 'Please enable Screen Guard App Lock manually.');
+    }
+  };
+
+  const testAppLockProtection = async () => {
+    if (!accessibilityEnabled) {
+      Alert.alert('Enable system protection first', 'Turn on Screen Guard App Lock in Android accessibility settings, then run the test again.');
+      return;
+    }
+    const app = appsRef.current.find((item) => item.locked);
+    if (!app) {
+      Alert.alert('No protected app', 'Enable protection for at least one app before running the test.');
+      return;
+    }
+    try {
+      await launchInstalledApp(app.packageName);
+    } catch (error) {
+      Alert.alert('Test failed', error instanceof Error ? error.message : 'Unable to open the protected app.');
+    }
+  };
+
   const changeTab = (nextTab: Tab) => {
     if (lockedApp) setLockedApp(null);
     setTab(nextTab);
@@ -197,14 +347,14 @@ export function Navigation() {
       case 'Activity':
         return <ActivityScreen apps={apps} themeColors={themeColors} />;
       case 'Settings':
-        return <SettingsScreen method={method} theme={theme} setTheme={setTheme} wallpaper={wallpaper} setWallpaper={setWallpaper} themeColors={themeColors} backgroundColor={appBackgroundColor} resettingPassword={resettingPassword} onResetPassword={confirmPasswordReset} onBack={() => setTab('Home')} />;
+        return <SettingsScreen method={method} theme={theme} setTheme={setTheme} wallpaper={wallpaper} setWallpaper={setWallpaper} themeColors={themeColors} backgroundColor={appBackgroundColor} lockedApps={apps.filter((app) => app.locked)} appWallpapers={appWallpapers} pickingWallpaperPackage={pickingWallpaperPackage} onSelectWallpaper={selectAppWallpaper} onRemoveWallpaper={removeAppWallpaper} remoteSyncAvailable={remoteSyncAvailable} accessibilityEnabled={accessibilityEnabled} onOpenProtectionSettings={openProtectionSettings} onTestProtection={() => { void testAppLockProtection(); }} resettingPassword={resettingPassword} onResetPassword={confirmPasswordReset} onBack={() => setTab('Home')} />;
       case 'Home':
       default:
-        return <AppsScreen apps={visibleApps} totalCount={apps.length} lockedCount={lockedCount} loading={loadingApps} search={search} setSearch={setSearch} themeColors={themeColors} onToggle={toggleApp} onOpen={setLockedApp} />;
+        return <AppsScreen apps={visibleApps} totalCount={apps.length} lockedCount={lockedCount} loading={loadingApps} search={search} setSearch={setSearch} themeColors={themeColors} accessibilityEnabled={accessibilityEnabled} onEnableProtection={openProtectionSettings} onTestProtection={() => { void testAppLockProtection(); }} onToggle={toggleApp} onOpen={setLockedApp} />;
     }
   };
 
-  if (lockedApp) return <LockScreen app={lockedApp} method={method} credential={credential} deviceId={deviceId} themeColors={themeColors} setMethod={setMethod} onUnlock={async () => { try { await launchInstalledApp(lockedApp.packageName); } catch (error) { Alert.alert('Unable to open app', error instanceof Error ? error.message : 'The selected app could not be opened.'); } finally { setLockedApp(null); } }} onClose={() => setLockedApp(null)} />;
+  if (lockedApp) return <LockScreen app={lockedApp} method={method} themeColors={themeColors} wallpaperUri={appWallpapers[lockedApp.packageName]} setMethod={setMethod} onUnlock={async () => { try { await allowAppTemporarily(lockedApp.packageName); await launchInstalledApp(lockedApp.packageName); } catch (error) { Alert.alert('Unable to open app', error instanceof Error ? error.message : 'The selected app could not be opened.'); } finally { setLockedApp(null); } }} onClose={() => setLockedApp(null)} />;
 
   return <SafeAreaView style={[styles.safe, { backgroundColor: appBackgroundColor }]}><StatusBar barStyle={theme === 'Light' ? 'dark-content' : 'light-content'} backgroundColor={appBackgroundColor} />
     <View style={{ flex: 1, backgroundColor: appContentColor }}>
@@ -219,7 +369,7 @@ export function Navigation() {
   </SafeAreaView>;
 }
 
-function SettingsScreen({ method, theme, setTheme, wallpaper, setWallpaper, themeColors, backgroundColor, resettingPassword, onResetPassword, onBack }: { method: LockMethod; theme: 'Dark' | 'Light' | 'System'; setTheme: (value: 'Dark' | 'Light' | 'System') => void; wallpaper: 'Night Glow' | 'Ocean' | 'Minimal'; setWallpaper: (value: 'Night Glow' | 'Ocean' | 'Minimal') => void; themeColors: ThemePalette; backgroundColor: string; resettingPassword: boolean; onResetPassword: () => void; onBack: () => void }) {
+function SettingsScreen({ method, theme, setTheme, wallpaper, setWallpaper, themeColors, backgroundColor, lockedApps, appWallpapers, pickingWallpaperPackage, onSelectWallpaper, onRemoveWallpaper, remoteSyncAvailable, accessibilityEnabled, onOpenProtectionSettings, onTestProtection, resettingPassword, onResetPassword, onBack }: { method: LockMethod; theme: 'Dark' | 'Light' | 'System'; setTheme: (value: 'Dark' | 'Light' | 'System') => void; wallpaper: 'Night Glow' | 'Ocean' | 'Minimal'; setWallpaper: (value: 'Night Glow' | 'Ocean' | 'Minimal') => void; themeColors: ThemePalette; backgroundColor: string; lockedApps: AppItem[]; appWallpapers: Record<string, string>; pickingWallpaperPackage: string | null; onSelectWallpaper: (app: AppItem) => void; onRemoveWallpaper: (app: AppItem) => void; remoteSyncAvailable: boolean | null; accessibilityEnabled: boolean; onOpenProtectionSettings: () => void; onTestProtection: () => void; resettingPassword: boolean; onResetPassword: () => void; onBack: () => void }) {
   const themes: Array<'Dark' | 'Light' | 'System'> = ['Dark', 'Light', 'System'];
   const wallpapers: Array<'Night Glow' | 'Ocean' | 'Minimal'> = ['Night Glow', 'Ocean', 'Minimal'];
 
@@ -236,6 +386,16 @@ function SettingsScreen({ method, theme, setTheme, wallpaper, setWallpaper, them
           <Text style={[styles.appName, { color: themeColors.text }]}>Current lock</Text>
           <Text style={[styles.link, { color: themeColors.teal }]}>{method}</Text>
         </View>
+        <View style={[styles.settingsRow, { borderBottomColor: themeColors.border }]}>
+          <Text style={[styles.appName, { color: themeColors.text }]}>Local verification</Text>
+          <Text style={[styles.link, { color: themeColors.teal }]}>On device</Text>
+        </View>
+        <View style={[styles.settingsRow, { borderBottomColor: themeColors.border }]}>
+          <Text style={[styles.appName, { color: themeColors.text }]}>Backend connection</Text>
+          <Text style={[styles.link, { color: remoteSyncAvailable === false ? themeColors.muted : themeColors.teal }]}>
+            {remoteSyncAvailable === null ? 'Checking' : remoteSyncAvailable ? 'Connected' : 'Offline'}
+          </Text>
+        </View>
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ disabled: resettingPassword }}
@@ -245,7 +405,24 @@ function SettingsScreen({ method, theme, setTheme, wallpaper, setWallpaper, them
         >
           <Text style={[styles.resetButtonText, { color: themeColors.danger }]}>{resettingPassword ? 'Resetting...' : 'Reset password'}</Text>
         </Pressable>
-        <Text style={[styles.infoText, { color: themeColors.muted }]}>Reset removes the saved lock and shows Fingerprint, Pattern, and PIN setup again.</Text>
+        <Text style={[styles.infoText, { color: themeColors.muted }]}>PINs, patterns, and biometric verifiers stay in Android Keystore. The backend connection is optional and is never used to unlock an app.</Text>
+      </View>
+
+      <View style={[styles.settingsCard, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}> 
+        <Text style={[styles.sectionTitle, { color: themeColors.text }]}>App lock protection</Text>
+        <View style={[styles.settingsRow, { borderBottomColor: themeColors.border }]}>
+          <Text style={[styles.appName, { color: themeColors.text }]}>Screen Guard App Lock</Text>
+          <Text style={[styles.link, { color: accessibilityEnabled ? themeColors.teal : themeColors.danger }]}>{accessibilityEnabled ? 'Enabled' : 'Disabled'}</Text>
+        </View>
+        <Text style={[styles.infoText, { color: themeColors.muted }]}>Allow the Android accessibility service to detect protected apps when they open from anywhere, including the home screen.</Text>
+        <View style={styles.protectionActions}>
+          <Pressable onPress={onOpenProtectionSettings} style={[styles.wallpaperAction, styles.protectionButton, { borderColor: themeColors.teal }]}>
+            <Text style={[styles.wallpaperActionText, { color: themeColors.teal }]}>{accessibilityEnabled ? 'Open system settings' : 'Enable app lock'}</Text>
+          </Pressable>
+          <Pressable onPress={onTestProtection} style={[styles.wallpaperAction, styles.protectionButton, { borderColor: themeColors.border }]}>
+            <Text style={[styles.wallpaperActionText, { color: themeColors.muted }]}>Run test</Text>
+          </Pressable>
+        </View>
       </View>
 
       <View style={[styles.settingsCard, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}> 
@@ -266,6 +443,46 @@ function SettingsScreen({ method, theme, setTheme, wallpaper, setWallpaper, them
             <Text style={[styles.link, { color: wallpaper === option ? themeColors.teal : themeColors.muted }]}>{wallpaper === option ? 'Applied' : 'Apply'}</Text>
           </Pressable>
         ))}
+      </View>
+
+      <View style={[styles.settingsCard, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}> 
+        <Text style={[styles.sectionTitle, { color: themeColors.text }]}>App wallpapers</Text>
+        <Text style={[styles.infoText, { color: themeColors.muted, marginBottom: 12 }]}>Choose a photo from this device for each protected app. The lock screen displays it before verification.</Text>
+        {lockedApps.length === 0 ? (
+          <View style={[styles.wallpaperEmpty, { borderColor: themeColors.border, backgroundColor: themeColors.bg }]}>
+            <Text style={[styles.appName, { color: themeColors.text }]}>No protected apps yet</Text>
+            <Text style={[styles.appState, { color: themeColors.muted }]}>Enable an app lock on the Home tab first.</Text>
+          </View>
+        ) : lockedApps.map((app) => {
+          const wallpaperUri = appWallpapers[app.packageName];
+          const picking = pickingWallpaperPackage === app.packageName;
+
+          return (
+            <View key={app.packageName} style={[styles.wallpaperRow, { borderBottomColor: themeColors.border }]}>
+              {wallpaperUri ? (
+                <Image source={{ uri: wallpaperUri }} style={styles.wallpaperThumbnail} />
+              ) : (
+                <View style={[styles.wallpaperThumbnail, styles.wallpaperThumbnailEmpty, { backgroundColor: themeColors.bg, borderColor: themeColors.border }]}>
+                  <Text style={[styles.wallpaperPlaceholderGlyph, { color: themeColors.muted }]}>＋</Text>
+                </View>
+              )}
+              <View style={styles.wallpaperCopy}>
+                <Text style={[styles.appName, { color: themeColors.text }]} numberOfLines={1}>{app.name}</Text>
+                <Text style={[styles.appState, { color: themeColors.muted }]}>{wallpaperUri ? 'Photo selected' : 'No photo selected'}</Text>
+                <View style={styles.wallpaperActions}>
+                  <Pressable disabled={picking} onPress={() => onSelectWallpaper(app)} style={[styles.wallpaperAction, { borderColor: themeColors.teal }]}>
+                    <Text style={[styles.wallpaperActionText, { color: themeColors.teal }]}>{picking ? 'Opening...' : wallpaperUri ? 'Change' : 'Choose photo'}</Text>
+                  </Pressable>
+                  {wallpaperUri ? (
+                    <Pressable onPress={() => onRemoveWallpaper(app)} style={[styles.wallpaperAction, { borderColor: themeColors.danger }]}>
+                      <Text style={[styles.wallpaperActionText, { color: themeColors.danger }]}>Remove</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              </View>
+            </View>
+          );
+        })}
       </View>
     </ScrollView>
   </SafeAreaView>;
@@ -321,7 +538,7 @@ function HomeScreen({ lockedCount, onApps }: { lockedCount: number; onApps: () =
     <Pressable style={styles.primary} onPress={onApps}><Text style={styles.tealText}>Manage protected apps</Text><Text style={styles.arrow}>→</Text></Pressable>
   </ScrollView>;
 }
-function AppsScreen({ apps, totalCount, lockedCount, loading, search, setSearch, themeColors, onToggle, onOpen }: { apps: AppItem[]; totalCount: number; lockedCount: number; loading: boolean; search: string; setSearch: (value: string) => void; themeColors: ThemePalette; onToggle: (packageName: string) => void; onOpen: (app: AppItem) => void }) {
+function AppsScreen({ apps, totalCount, lockedCount, loading, search, setSearch, themeColors, accessibilityEnabled, onEnableProtection, onTestProtection, onToggle, onOpen }: { apps: AppItem[]; totalCount: number; lockedCount: number; loading: boolean; search: string; setSearch: (value: string) => void; themeColors: ThemePalette; accessibilityEnabled: boolean; onEnableProtection: () => void; onTestProtection: () => void; onToggle: (packageName: string) => void; onOpen: (app: AppItem) => void }) {
   return (
     <ScrollView contentContainerStyle={[styles.list, { backgroundColor: themeColors.bg }]} keyboardShouldPersistTaps="handled">
       <View style={[styles.appsHero, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}>
@@ -332,6 +549,21 @@ function AppsScreen({ apps, totalCount, lockedCount, loading, search, setSearch,
         <View style={[styles.appsCountBadge, { backgroundColor: themeColors.bg, borderColor: themeColors.teal }]}>
           <Text style={[styles.appsCountValue, { color: themeColors.teal }]}>{lockedCount}</Text>
           <Text style={[styles.appsCountLabel, { color: themeColors.muted }]}>locked</Text>
+        </View>
+      </View>
+
+      <View style={[styles.protectionBanner, { backgroundColor: themeColors.panel, borderColor: accessibilityEnabled ? themeColors.teal : themeColors.danger }]}>
+        <View style={styles.protectionBannerCopy}>
+          <Text style={[styles.protectionBannerTitle, { color: themeColors.text }]}>{accessibilityEnabled ? 'System protection is on' : 'Enable protection before opening apps'}</Text>
+          <Text style={[styles.protectionBannerText, { color: themeColors.muted }]}>{accessibilityEnabled ? 'Protected apps will show your lock screen before opening, even from the home screen.' : 'Android requires you to enable Screen Guard App Lock in system accessibility settings.'}</Text>
+        </View>
+        <View style={styles.protectionBannerActions}>
+          <Pressable onPress={onEnableProtection} style={[styles.wallpaperAction, { borderColor: themeColors.teal }]}>
+            <Text style={[styles.wallpaperActionText, { color: themeColors.teal }]}>{accessibilityEnabled ? 'Manage' : 'Enable'}</Text>
+          </Pressable>
+          <Pressable onPress={onTestProtection} style={[styles.wallpaperAction, { borderColor: themeColors.border }]}>
+            <Text style={[styles.wallpaperActionText, { color: themeColors.muted }]}>Test</Text>
+          </Pressable>
         </View>
       </View>
 
@@ -401,7 +633,7 @@ function ActivityScreen({ apps, themeColors }: { apps: AppItem[]; themeColors: T
         {apps.length === 0 ? (
           <Text style={[styles.package, { color: themeColors.muted }]}>No installed apps are available.</Text>
         ) : apps.map((app) => (
-          <View key={app.packageName} style={[styles.appRow, { borderBottomColor: themeColors.border }, app.locked && { backgroundColor: themeColors.bg, borderRadius: 12, paddingHorizontal: 8 }]}>
+          <View key={app.packageName} style={[styles.activityAppRow, { borderBottomColor: themeColors.border }, app.locked && { backgroundColor: themeColors.bg, borderRadius: 12 }]}>
             <View style={styles.appContent}>
               {app.icon ? (
                 <Image source={{ uri: app.icon }} style={[styles.appIcon, { backgroundColor: themeColors.border }]} />
@@ -575,6 +807,8 @@ function PatternLine({ start, end, color }: PatternLineProps) {
   const deltaX = end.x - start.x;
   const deltaY = end.y - start.y;
   const length = Math.hypot(deltaX, deltaY);
+  const centerX = (start.x + end.x) / 2;
+  const centerY = (start.y + end.y) / 2;
   const angle = Math.atan2(deltaY, deltaX);
 
   if (length < 1) return null;
@@ -587,9 +821,9 @@ function PatternLine({ start, end, color }: PatternLineProps) {
         {
           backgroundColor: color,
           width: length,
-          left: start.x,
-          top: start.y,
-          transform: [{ translateX: -2 }, { translateY: -1 }, { rotateZ: `${angle}rad` }],
+          left: centerX - length / 2,
+          top: centerY - 2,
+          transform: [{ rotateZ: `${angle}rad` }],
         },
       ]}
     />
@@ -707,7 +941,7 @@ function PinPad({ value, onChange, themeColors = screenGuardColors }: { value: s
   );
 }
 
-function LockScreen({ app, method, credential, deviceId, themeColors, setMethod, onUnlock, onClose }: { app: AppItem; method: LockMethod; credential: string; deviceId: string; themeColors: ThemePalette; setMethod: (value: LockMethod) => void; onUnlock: () => void; onClose: () => void }) {
+function LockScreen({ app, method, themeColors, wallpaperUri, setMethod, onUnlock, onClose }: { app: AppItem; method: LockMethod; themeColors: ThemePalette; wallpaperUri?: string; setMethod: (value: LockMethod) => void; onUnlock: () => void; onClose: () => void }) {
   const [value, setValue] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -718,6 +952,16 @@ function LockScreen({ app, method, credential, deviceId, themeColors, setMethod,
     setError('');
 
     try {
+      const configuredMethod = await getLocalLockMethod();
+      if (!configuredMethod) {
+        setError('No local lock is configured. Reset the password in Settings.');
+        return;
+      }
+      if (configuredMethod !== method) {
+        setError(`Use your configured ${configuredMethod.toLowerCase()} lock.`);
+        return;
+      }
+
       if (method === 'Fingerprint') {
         const supported = await LocalAuthentication.hasHardwareAsync();
         const enrolled = await LocalAuthentication.isEnrolledAsync();
@@ -726,59 +970,72 @@ function LockScreen({ app, method, credential, deviceId, themeColors, setMethod,
           return;
         }
         const result = await LocalAuthentication.authenticateAsync({ promptMessage: `Unlock ${app.name}` });
-        if (result.success) onUnlock();
-        else setError('Fingerprint verification was not completed.');
-        return;
+        if (!result.success) {
+          setError('Fingerprint verification was not completed.');
+          return;
+        }
       }
 
-      const valid = await verifyLockCredential(deviceId, value);
+      const valid = await verifyLocalLockCredential(method, method === 'Fingerprint' ? 'enabled' : value);
       if (valid) onUnlock();
       else setError(`Incorrect ${method.toLowerCase()}.`);
     } catch {
-      if (value === credential) onUnlock();
-      else setError('Unable to verify with the backend. Check your connection and try again.');
+      setError('Unable to read secure lock data. Reset the password in Settings.');
     } finally {
       setBusy(false);
     }
   };
 
+  const hasWallpaper = Boolean(wallpaperUri);
+  const lockTextColor = hasWallpaper ? '#f5f7fb' : themeColors.text;
+  const lockPanelColor = hasWallpaper ? 'rgba(2, 11, 27, 0.72)' : themeColors.panel;
+  const lockBorderColor = hasWallpaper ? 'rgba(255, 255, 255, 0.22)' : themeColors.border;
+
+  const lockContent = (
+    <ScrollView contentContainerStyle={[styles.lock, { backgroundColor: hasWallpaper ? 'transparent' : themeColors.bg }]}>
+      <Pressable style={styles.close} onPress={onClose}><Text style={[styles.closeText, { color: lockTextColor }]}>×</Text></Pressable>
+      <View style={[styles.lockIcon, { backgroundColor: app.color }]}><Text style={styles.lockMark}>{app.mark}</Text></View>
+      <Text style={[styles.lockTitle, { color: lockTextColor }]}>{app.name} is locked</Text>
+      <View style={styles.selector}>
+        {lockMethods.map((option) => (
+          <Pressable
+            key={option}
+            style={[styles.selectorItem, { backgroundColor: lockPanelColor, borderColor: lockBorderColor }, method === option && { borderColor: themeColors.teal }]}
+            onPress={() => { setMethod(option); setValue(''); setError(''); }}
+          >
+            <Text style={[styles.selectorText, { color: method === option ? themeColors.teal : lockTextColor }]}>{option === 'Fingerprint' ? '◉' : option === 'Pattern' ? '⠿' : '••••'} {option}</Text>
+          </Pressable>
+        ))}
+      </View>
+      {method === 'Fingerprint' ? (
+        <Pressable style={[styles.fingerprint, { backgroundColor: lockPanelColor, borderColor: lockBorderColor }]} onPress={() => { void verify(); }}>
+          <Text style={[styles.fingerprintGlyph, { color: themeColors.teal }]}>◉</Text>
+        </Pressable>
+      ) : method === 'Pattern' ? (
+        <PatternPad value={value} onChange={setValue} themeColors={hasWallpaper ? screenGuardColors : themeColors} />
+      ) : (
+        <PinPad value={value} onChange={setValue} themeColors={hasWallpaper ? screenGuardColors : themeColors} />
+      )}
+      <Pressable style={[styles.verifyButton, { borderColor: themeColors.teal, backgroundColor: hasWallpaper ? 'rgba(2, 11, 27, 0.72)' : themeColors.bg }]} disabled={busy} onPress={() => { void verify(); }}>
+        <Text style={[styles.tealText, { color: themeColors.teal }]}>{busy ? 'Verifying...' : 'Unlock'}</Text>
+      </Pressable>
+      {error ? <Text style={[validationStyles.error, { color: '#ff8a95' }]}>{error}</Text> : null}
+    </ScrollView>
+  );
+
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: themeColors.bg }]}>
-      <StatusBar barStyle={themeColors === themePalettes.Light ? 'dark-content' : 'light-content'} backgroundColor={themeColors.bg} />
-      <ScrollView contentContainerStyle={[styles.lock, { backgroundColor: themeColors.bg }]}>
-        <Pressable style={styles.close} onPress={onClose}><Text style={[styles.closeText, { color: themeColors.text }]}>×</Text></Pressable>
-        <View style={[styles.lockIcon, { backgroundColor: app.color }]}><Text style={styles.lockMark}>{app.mark}</Text></View>
-        <Text style={[styles.lockTitle, { color: themeColors.text }]}>{app.name} is locked</Text>
-        <View style={styles.selector}>
-          {lockMethods.map((option) => (
-            <Pressable
-              key={option}
-              style={[styles.selectorItem, { backgroundColor: themeColors.panel, borderColor: themeColors.border }, method === option && { borderColor: themeColors.teal }]}
-              onPress={() => { setMethod(option); setValue(''); setError(''); }}
-            >
-              <Text style={[styles.selectorText, { color: method === option ? themeColors.teal : themeColors.text }]}>{option === 'Fingerprint' ? '◉' : option === 'Pattern' ? '⠿' : '••••'} {option}</Text>
-            </Pressable>
-          ))}
-        </View>
-        {method === 'Fingerprint' ? (
-          <Pressable style={[styles.fingerprint, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]} onPress={() => { void verify(); }}>
-            <Text style={[styles.fingerprintGlyph, { color: themeColors.teal }]}>◉</Text>
-          </Pressable>
-        ) : method === 'Pattern' ? (
-          <PatternPad value={value} onChange={setValue} themeColors={themeColors} />
-        ) : (
-          <PinPad value={value} onChange={setValue} themeColors={themeColors} />
-        )}
-        <Pressable style={[styles.verifyButton, { borderColor: themeColors.teal }]} disabled={busy} onPress={() => { void verify(); }}>
-          <Text style={[styles.tealText, { color: themeColors.teal }]}>{busy ? 'Verifying...' : 'Unlock'}</Text>
-        </Pressable>
-        {error ? <Text style={[validationStyles.error, { color: themeColors.danger }]}>{error}</Text> : null}
-      </ScrollView>
+      <StatusBar barStyle={hasWallpaper || themeColors !== themePalettes.Light ? 'light-content' : 'dark-content'} backgroundColor={themeColors.bg} />
+      {wallpaperUri ? (
+        <ImageBackground source={{ uri: wallpaperUri }} style={styles.fill} imageStyle={styles.lockWallpaperImage} blurRadius={1}>
+          <View style={styles.lockWallpaperOverlay}>{lockContent}</View>
+        </ImageBackground>
+      ) : lockContent}
     </SafeAreaView>
   );
 }
 
-function LegacyLockScreen({ app, method, credential, deviceId, setMethod, onUnlock, onClose }: { app: AppItem; method: LockMethod; credential: string; deviceId: string; setMethod: (value: LockMethod) => void; onUnlock: () => void; onClose: () => void }) { const [value, setValue] = useState(''); const [error, setError] = useState(''); const verify = async () => { if (method === 'Fingerprint') { const result = await LocalAuthentication.authenticateAsync({ promptMessage: `Unlock ${app.name}` }); if (result.success) onUnlock(); else setError('Fingerprint verification failed.'); return; } try { const valid = await verifyLockCredential(deviceId, value); if (valid) onUnlock(); else setError(`Incorrect ${method.toLowerCase()}.`); } catch { if (value === credential) onUnlock(); else setError('Unable to verify with the backend.'); } }; return <SafeAreaView style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={screenGuardColors.bg} /><ScrollView contentContainerStyle={styles.lock}><Pressable style={styles.close} onPress={onClose}><Text style={styles.closeText}>×</Text></Pressable><View style={[styles.lockIcon, { backgroundColor: app.color }]}><Text style={styles.lockMark}>{app.mark}</Text></View><Text style={styles.lockTitle}>{app.name} is locked</Text><View style={styles.selector}>{lockMethods.map((option) => <Pressable key={option} style={[styles.selectorItem, method === option && styles.selectorActive]} onPress={() => { setMethod(option); setValue(''); setError(''); }}><Text style={[styles.selectorText, method === option && styles.tealText]}>{option === 'Fingerprint' ? '◉' : option === 'Pattern' ? '⠿' : '••••'} {option}</Text></Pressable>)}</View>{method === 'Fingerprint' ? <Pressable style={styles.fingerprint} onPress={verify}><Text style={styles.fingerprintGlyph}>◉</Text></Pressable> : method === 'Pattern' ? <PatternPad value={value} onChange={setValue} /> : <PinPad value={value} onChange={setValue} />}<Pressable style={styles.verifyButton} onPress={verify}><Text style={styles.tealText}>Verify {method}</Text></Pressable>{error ? <Text style={validationStyles.error}>{error}</Text> : null}<Text style={styles.unlockHint}>{method === 'Fingerprint' ? 'Touch the sensor to unlock' : `Enter your ${method.toLowerCase()} to unlock`}</Text></ScrollView></SafeAreaView>; }
+function LegacyLockScreen({ app, method, credential, deviceId, setMethod, onUnlock, onClose }: { app: AppItem; method: LockMethod; credential: string; deviceId: string; setMethod: (value: LockMethod) => void; onUnlock: () => void; onClose: () => void }) { const [value, setValue] = useState(''); const [error, setError] = useState(''); const verify = async () => { if (method === 'Fingerprint') { const result = await LocalAuthentication.authenticateAsync({ promptMessage: `Unlock ${app.name}` }); if (result.success) onUnlock(); else setError('Fingerprint verification failed.'); return; } try { const valid = await verifyLocalLockCredential(method, value); if (valid) onUnlock(); else setError(`Incorrect ${method.toLowerCase()}.`); } catch { if (value === credential) onUnlock(); else setError('Unable to verify with the backend.'); } }; return <SafeAreaView style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={screenGuardColors.bg} /><ScrollView contentContainerStyle={styles.lock}><Pressable style={styles.close} onPress={onClose}><Text style={styles.closeText}>×</Text></Pressable><View style={[styles.lockIcon, { backgroundColor: app.color }]}><Text style={styles.lockMark}>{app.mark}</Text></View><Text style={styles.lockTitle}>{app.name} is locked</Text><View style={styles.selector}>{lockMethods.map((option) => <Pressable key={option} style={[styles.selectorItem, method === option && styles.selectorActive]} onPress={() => { setMethod(option); setValue(''); setError(''); }}><Text style={[styles.selectorText, method === option && styles.tealText]}>{option === 'Fingerprint' ? '◉' : option === 'Pattern' ? '⠿' : '••••'} {option}</Text></Pressable>)}</View>{method === 'Fingerprint' ? <Pressable style={styles.fingerprint} onPress={verify}><Text style={styles.fingerprintGlyph}>◉</Text></Pressable> : method === 'Pattern' ? <PatternPad value={value} onChange={setValue} /> : <PinPad value={value} onChange={setValue} />}<Pressable style={styles.verifyButton} onPress={verify}><Text style={styles.tealText}>Verify {method}</Text></Pressable>{error ? <Text style={validationStyles.error}>{error}</Text> : null}<Text style={styles.unlockHint}>{method === 'Fingerprint' ? 'Touch the sensor to unlock' : `Enter your ${method.toLowerCase()} to unlock`}</Text></ScrollView></SafeAreaView>; }
 
 const validationStyles = StyleSheet.create({
   validation: { padding: 30, paddingTop: 38, paddingBottom: 40 },
@@ -838,6 +1095,8 @@ const styles = StyleSheet.create({
   emptyTitle: { color: screenGuardColors.text, fontSize: 18, fontWeight: '700', marginBottom: 4 },
   activity: { padding: 30, paddingBottom: 110 },
   lock: { padding: 30, paddingTop: 60, alignItems: 'center', minHeight: '100%' },
+  lockWallpaperImage: { opacity: 1 },
+  lockWallpaperOverlay: { flex: 1, backgroundColor: 'rgba(2, 11, 27, 0.56)' },
   hero: { color: screenGuardColors.teal, fontSize: 52, marginBottom: 12 },
   title: { color: screenGuardColors.text, fontSize: 31, fontWeight: '700' },
   subtitle: { color: screenGuardColors.muted, fontSize: 19, marginTop: 12 },
@@ -868,6 +1127,22 @@ const styles = StyleSheet.create({
   settingsHeader: { marginBottom: 18 },
   settingsCard: { backgroundColor: screenGuardColors.panel, borderRadius: 18, borderWidth: 1, borderColor: screenGuardColors.border, padding: 14, marginBottom: 18 },
   settingsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, paddingHorizontal: 6, borderBottomWidth: 1, borderBottomColor: screenGuardColors.border },
+  wallpaperRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 12, borderBottomWidth: 1 },
+  wallpaperThumbnail: { width: 62, height: 62, borderRadius: 14, marginRight: 12, backgroundColor: screenGuardColors.border },
+  wallpaperThumbnailEmpty: { alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderStyle: 'dashed' },
+  wallpaperPlaceholderGlyph: { fontSize: 24, fontWeight: '600' },
+  wallpaperCopy: { flex: 1, minWidth: 0 },
+  wallpaperActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 9 },
+  wallpaperAction: { minHeight: 34, borderWidth: 1, borderRadius: 10, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center' },
+  protectionActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  protectionBanner: { borderWidth: 1, borderRadius: 18, padding: 15, marginBottom: 14 },
+  protectionBannerCopy: { flex: 1 },
+  protectionBannerTitle: { fontSize: 15, fontWeight: '800', marginBottom: 4 },
+  protectionBannerText: { fontSize: 12, lineHeight: 18 },
+  protectionBannerActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  protectionButton: { marginTop: 0, paddingHorizontal: 14 },
+  wallpaperActionText: { fontSize: 12, fontWeight: '700' },
+  wallpaperEmpty: { borderWidth: 1, borderRadius: 12, padding: 14 },
   resetButton: { minHeight: 48, borderWidth: 1, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 14, paddingHorizontal: 16 },
   resetButtonText: { fontSize: 16, fontWeight: '700' },
   count: { marginTop: 16, marginBottom: 10 },
@@ -875,6 +1150,7 @@ const styles = StyleSheet.create({
   search: { flex: 1, height: '100%', color: screenGuardColors.text, fontSize: 15, paddingHorizontal: 0, paddingVertical: 0 },
   package: { color: screenGuardColors.muted, fontSize: 16, marginTop: 12 },
   appRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: screenGuardColors.border },
+  activityAppRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 72, paddingHorizontal: 8, paddingVertical: 8, borderBottomWidth: 1 },
   appContent: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   appIcon: { width: 48, height: 48, borderRadius: 14, marginRight: 12, backgroundColor: screenGuardColors.border },
   appCopy: { flex: 1, minWidth: 0 },

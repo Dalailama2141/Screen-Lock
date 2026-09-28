@@ -3,6 +3,12 @@ apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+def hasReleaseKeystore = keystorePropertiesFile.exists()
+if (hasReleaseKeystore) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+}
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -103,10 +109,10 @@ android {
             keyPassword 'android'
         }
         release {
-            storeFile file(findProperty('android.release.storeFile') ?: 'release.keystore')
-            storePassword findProperty('android.release.storePassword') ?: ''
-            keyAlias findProperty('android.release.keyAlias') ?: ''
-            keyPassword findProperty('android.release.keyPassword') ?: ''
+            storeFile hasReleaseKeystore ? rootProject.file(keystoreProperties['storeFile']) : file('release.keystore')
+            storePassword hasReleaseKeystore ? keystoreProperties['storePassword'] : ''
+            keyAlias hasReleaseKeystore ? keystoreProperties['keyAlias'] : ''
+            keyPassword hasReleaseKeystore ? keystoreProperties['keyPassword'] : ''
         }
     }
     buildTypes {
@@ -114,7 +120,7 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            signingConfig signingConfigs.release
+            signingConfig hasReleaseKeystore ? signingConfigs.release : signingConfigs.debug
             shrinkResources (findProperty('android.enableShrinkResourcesInReleaseBuilds')?.toBoolean() ?: false)
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"

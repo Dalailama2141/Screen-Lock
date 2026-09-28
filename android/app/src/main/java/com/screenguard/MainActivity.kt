@@ -1,5 +1,6 @@
 package com.screenguard
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 
@@ -16,7 +17,20 @@ class MainActivity : ReactActivity() {
     // coloring the background, status bar, and navigation bar.
     // This is required for expo-splash-screen.
     setTheme(R.style.AppTheme);
+    captureLockIntent(intent)
     super.onCreate(null)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    captureLockIntent(intent)
+  }
+
+  private fun captureLockIntent(intent: Intent?) {
+    val packageName = intent?.getStringExtra(AppLockAccessibilityService.EXTRA_LOCKED_PACKAGE)
+    AppLockStorage.setPendingPackage(this, packageName)
+    intent?.removeExtra(AppLockAccessibilityService.EXTRA_LOCKED_PACKAGE)
   }
 
   /**

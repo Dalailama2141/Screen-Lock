@@ -4,7 +4,7 @@
     "slug": "screen-guard",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "entryPoint": "./index.js",
     "assetBundlePatterns": [
       "**/*"
@@ -14,7 +14,16 @@
     },
     "plugins": [
       "./plugins/withInstalledApps",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Screen Guard to select a photo to use as a wallpaper for a protected app.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      "expo-secure-store"
     ]
   }
 }

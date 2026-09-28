@@ -1,3 +1,6 @@
 <resources>
   <string name="app_name">Screen Guard</string>
+  <string name="app_lock_service_label">Screen Guard App Lock</string>
+  <string name="app_lock_service_summary">Detects only the foreground package name and shows the Screen Guard lock screen.</string>
+  <string name="app_lock_service_description">Screen Guard reads only the package name of the foreground app. It does not read screen content, form data, or personal information.</string>
 </resources>
