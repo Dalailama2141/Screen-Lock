@@ -197,18 +197,29 @@ public class AppLockMonitorService extends Service {
         return foregroundPackage;
     }
 
+    private static final int FOREGROUND_LIGHT = 0xFFF5F7FB;
+    private static final int FOREGROUND_DARK = 0xFF0B1020;
+
+    /** Picks black or white overlay text so the label stays readable on light accents. */
+    private static int readableForeground(int background) {
+        float[] hsl = new float[3];
+        Color.colorToHSL(background, hsl);
+        return hsl[2] > 0.55f ? FOREGROUND_DARK : FOREGROUND_LIGHT;
+    }
+
     private void showOverlay(String packageName) {
         if (overlayView != null || !AppLockStorage.canDrawOverlays(this)) return;
 
         LinearLayout overlay = new LinearLayout(this);
         overlay.setOrientation(LinearLayout.VERTICAL);
         overlay.setGravity(Gravity.CENTER);
-        overlay.setBackgroundColor(Color.rgb(2, 11, 27));
+        int background = AppLockStorage.getAccentColor(this);
+        overlay.setBackgroundColor(background);
 
         ProgressBar loader = new ProgressBar(this);
         loader.setIndeterminate(true);
         if (loader.getIndeterminateDrawable() != null) {
-            loader.getIndeterminateDrawable().setColorFilter(Color.rgb(38, 228, 213), PorterDuff.Mode.SRC_IN);
+            loader.getIndeterminateDrawable().setColorFilter(readableForeground(background), PorterDuff.Mode.SRC_IN);
         }
         LinearLayout.LayoutParams loaderParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -220,7 +231,7 @@ public class AppLockMonitorService extends Service {
 
         TextView message = new TextView(this);
         message.setText("Screen Guard\nVerifying app lock…");
-        message.setTextColor(Color.WHITE);
+        message.setTextColor(readableForeground(background));
         message.setTextSize(18);
         message.setGravity(Gravity.CENTER);
         message.setPadding(32, 32, 32, 32);

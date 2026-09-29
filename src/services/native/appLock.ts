@@ -34,6 +34,7 @@ type AppLockNativeModule = {
   openProtectedApp: (packageName: string, durationMs: number) => Promise<void>;
   clearSessionUnlock: () => Promise<void>;
   getAppIcon: (packageName: string) => Promise<string>;
+  setAccentColor: (hexColor: string) => Promise<void>;
 };
 
 const appLockModule = NativeModules.InstalledApps as AppLockNativeModule | undefined;
@@ -129,4 +130,10 @@ export function getNativeProtectedApps(): Promise<string[]> {
 export function consumePendingLockPackage(): Promise<string | null> {
   if (!isAvailable() || !appLockModule?.consumePendingLockPackage) return Promise.resolve(null);
   return appLockModule.consumePendingLockPackage();
+}
+
+/** Mirrors the selected accent so the native lock overlay matches the Settings colour. */
+export function setNativeAccentColor(hexColor: string): Promise<void> {
+  if (!isAvailable() || !appLockModule?.setAccentColor) return Promise.resolve();
+  return appLockModule.setAccentColor(hexColor);
 }

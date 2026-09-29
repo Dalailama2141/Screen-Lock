@@ -391,4 +391,20 @@ public class InstalledAppsModule extends ReactContextBaseJavaModule {
             promise.reject("TEMPORARY_UNLOCK_ERROR", "Unable to authorize app launch", error);
         }
     }
+
+    @ReactMethod
+    public void setAccentColor(String hexColor, Promise promise) {
+        try {
+            String value = hexColor == null ? "" : hexColor.trim();
+            if (value.startsWith("#")) value = value.substring(1);
+            if (value.length() != 6) {
+                promise.reject("INVALID_COLOR", "Accent colour must be a 6 digit hex value");
+                return;
+            }
+            AppLockStorage.setAccentColor(getReactApplicationContext(), 0xFF000000 | Integer.parseInt(value, 16));
+            promise.resolve(null);
+        } catch (Exception error) {
+            promise.reject("ACCENT_COLOR_ERROR", "Unable to store accent colour", error);
+        }
+    }
 }

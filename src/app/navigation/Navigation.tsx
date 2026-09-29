@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, SafeAreaView, StatusBar, StyleSheet, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { checkNotificationPermission, clearSessionUnlock, consumePendingLockPackage, dismissLockOverlay, getAppIcon, getAppLockPermissionStatus, getAppUsage, getNativeProtectedApps, hideLockOverlay, openOverlaySettings, openProtectedApp, openUsageAccessSettings, requestNotificationPermission, setNativeProtectedApps, startAppLockProtection, type AppUsageStat } from '../../services/native/appLock';
+import { checkNotificationPermission, clearSessionUnlock, consumePendingLockPackage, dismissLockOverlay, getAppIcon, getAppLockPermissionStatus, getAppUsage, getNativeProtectedApps, hideLockOverlay, openOverlaySettings, openProtectedApp, openUsageAccessSettings, requestNotificationPermission, setNativeAccentColor, setNativeProtectedApps, startAppLockProtection, type AppUsageStat } from '../../services/native/appLock';
 import { getInstalledApps } from '../../services/native/installedApps';
 import { deleteLockCredential, getLockSettings } from '../../services/api';
 import { createLocalLockCredential, deleteLocalLockCredential, getLocalLockMethod, hasLocalLockCredential } from '../../services/lockCredentials';
@@ -125,6 +125,10 @@ export function Navigation() {
       .catch((error) => console.error('Unable to load accent colour', error));
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    void setNativeAccentColor(accentColor(accent).bg);
+  }, [accent]);
 
   useEffect(() => {
     let active = true;

@@ -16,6 +16,7 @@ final class AppLockStorage {
     private static final String KEY_PROTECTED_PACKAGES = "protected_packages";
     private static final String KEY_PENDING_PACKAGE = "pending_package";
     private static final String KEY_PROTECTION_ENABLED = "protection_enabled";
+    private static final String KEY_ACCENT_COLOR = "accent_color";
     private static final String KEY_SESSION_UNLOCKED = "session_unlocked";
     private static final String KEY_SESSION_PACKAGE = "session_package";
     private static final String KEY_SESSION_STARTED_AT = "session_started_at";
@@ -158,5 +159,19 @@ final class AppLockStorage {
 
     static boolean isProtectionEnabled(Context context) {
         return preferences(context).getBoolean(KEY_PROTECTION_ENABLED, false);
+    }
+
+    private static final int DEFAULT_ACCENT_COLOR = 0xFF020B1B;
+
+    /**
+     * Background colour for the native lock overlay, mirrored from the JS accent selection so the
+     * overlay drawn over a third-party app matches the colour chosen in Settings.
+     */
+    static int getAccentColor(Context context) {
+        return preferences(context).getInt(KEY_ACCENT_COLOR, DEFAULT_ACCENT_COLOR);
+    }
+
+    static void setAccentColor(Context context, int color) {
+        preferences(context).edit().putInt(KEY_ACCENT_COLOR, color).apply();
     }
 }
