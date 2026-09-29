@@ -1,0 +1,25 @@
+@import '../../../styles/variables';
+
+.pinPad {
+  width: 270;
+  marginTop: 25;
+  alignSelf: 'center';
+  flexDirection: 'row';
+  flexWrap: 'wrap';
+  justifyContent: 'space-between';
+}
+
+.key {
+  width: 80;
+  height: 58;
+  marginBottom: 10;
+  borderRadius: $radius-md;
+  borderWidth: 1;
+  alignItems: 'center';
+  justifyContent: 'center';
+}
+
+.keyText {
+  fontSize: $font-glyph;
+  fontWeight: $weight-bold;
+}

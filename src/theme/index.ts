@@ -7,9 +7,3 @@ export const screenGuardColors = {
   teal: '#26e4d5',
   danger: '#ff5261',
 } as const;
-
-export const theme = {
-  colors: screenGuardColors,
-  spacing: {},
-  typography: {},
-};

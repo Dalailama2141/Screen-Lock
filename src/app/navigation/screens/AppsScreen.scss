@@ -1,0 +1,198 @@
+@import '../../../styles/variables';
+
+.list {
+  padding: 20;
+  paddingBottom: 110;
+}
+
+.brandRow {
+  flexDirection: 'row';
+  alignItems: 'center';
+  marginBottom: 14;
+}
+
+.brandDiamond {
+  fontSize: $font-glyph;
+  marginRight: 8;
+}
+
+.brandLabel {
+  fontSize: $font-title;
+  fontWeight: $weight-bold;
+}
+
+.appsHero {
+  flexDirection: 'row';
+  alignItems: 'center';
+  justifyContent: 'space-between';
+  borderRadius: $radius-xl;
+  borderWidth: 1;
+  padding: 18;
+  marginBottom: 16;
+}
+
+.appsHeroCopy {
+  flex: 1;
+  paddingRight: 14;
+}
+
+.appsHeroTitle {
+  fontSize: $font-title;
+  fontWeight: $weight-bold;
+}
+
+.appsHeroSubtitle {
+  fontSize: $font-body;
+  lineHeight: $line-body;
+  marginTop: 5;
+}
+
+.appsCountBadge {
+  minWidth: 62;
+  height: 62;
+  borderRadius: $radius-lg;
+  backgroundColor: '#08303a';
+  borderWidth: 1;
+  borderColor: '#1b5963';
+  alignItems: 'center';
+  justifyContent: 'center';
+}
+
+.appsCountValue {
+  fontSize: $font-title;
+  lineHeight: 24;
+  fontWeight: $weight-bold;
+}
+
+.appsCountLabel {
+  fontSize: $font-caption;
+  fontWeight: $weight-semibold;
+  marginTop: 1;
+}
+
+.searchWrap {
+  height: 52;
+  borderRadius: 15;
+  borderWidth: 1;
+  flexDirection: 'row';
+  alignItems: 'center';
+  paddingHorizontal: 14;
+}
+
+.searchGlyph {
+  fontSize: $font-glyph-lg;
+  marginRight: 8;
+  marginTop: -3;
+}
+
+.search {
+  flex: 1;
+  height: '100%';
+  fontSize: $font-body;
+  paddingHorizontal: 0;
+  paddingVertical: 0;
+}
+
+.listLabel {
+  fontSize: $font-label;
+  fontWeight: $weight-semibold;
+  marginTop: 15;
+  marginBottom: 10;
+  paddingHorizontal: 3;
+}
+
+.appListCard {
+  borderRadius: $radius-xl;
+  borderWidth: 1;
+  padding: 7;
+}
+
+.appListRow {
+  minHeight: 68;
+  flexDirection: 'row';
+  alignItems: 'center';
+  justifyContent: 'space-between';
+  borderRadius: 15;
+  borderWidth: 1;
+  borderColor: 'transparent';
+  paddingHorizontal: 10;
+  paddingVertical: 8;
+  marginVertical: 3;
+}
+
+.appState {
+  fontSize: $font-label;
+  marginTop: 3;
+}
+
+.emptyState {
+  minHeight: 150;
+  borderRadius: $radius-xl;
+  borderWidth: 1;
+  alignItems: 'center';
+  justifyContent: 'center';
+  padding: 24;
+}
+
+.emptyTitle {
+  fontSize: $font-section;
+  fontWeight: $weight-bold;
+  marginBottom: 4;
+}
+
+.appContent {
+  flexDirection: 'row';
+  alignItems: 'center';
+  flex: 1;
+}
+
+.appIcon {
+  width: 48;
+  height: 48;
+  borderRadius: 14;
+  marginRight: 12;
+}
+
+.appCopy {
+  flex: 1;
+}
+
+.appName {
+  fontSize: $font-body-lg;
+  fontWeight: $weight-semibold;
+}
+
+.activityIcon {
+  alignItems: 'center';
+  justifyContent: 'center';
+}
+
+.appMark {
+  fontSize: $font-section;
+  fontWeight: $weight-bold;
+}
+
+.switch {
+  width: 54;
+  height: 32;
+  borderRadius: 16;
+  backgroundColor: '#243044';
+  justifyContent: 'center';
+  paddingHorizontal: 4;
+}
+
+.thumb {
+  width: 22;
+  height: 22;
+  borderRadius: 11;
+  marginLeft: 2;
+}
+
+.thumbOn {
+  marginLeft: 28;
+}
+
+.package {
+  fontSize: $font-body;
+  marginTop: 12;
+}

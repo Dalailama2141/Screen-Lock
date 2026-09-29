@@ -350,7 +350,7 @@ public class InstalledAppsModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void clearSessionUnlock(Promise promise) {
-        AppLockStorage.setSessionUnlocked(getReactApplicationContext(), false);
+        AppLockStorage.clearLockSession(getReactApplicationContext());
         promise.resolve(null);
     }
 

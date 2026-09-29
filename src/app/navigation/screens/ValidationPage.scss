@@ -1,0 +1,32 @@
+@import '../../../styles/variables';
+
+.fill {
+  flex: 1;
+}
+
+.validation {
+  padding: 30;
+  paddingTop: 38;
+  paddingBottom: 40;
+}
+
+.title {
+  fontSize: $font-display;
+  fontWeight: $weight-bold;
+}
+
+.subtitle {
+  fontSize: $font-body-lg;
+  marginTop: 12;
+}
+
+.link {
+  fontSize: $font-body;
+  fontWeight: $weight-semibold;
+}
+
+.error {
+  fontSize: $font-body;
+  marginTop: 16;
+  textAlign: 'center';
+}

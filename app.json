@@ -13,7 +13,6 @@
       "package": "com.screenguard"
     },
     "plugins": [
-      "./plugins/withInstalledApps",
       "expo-asset",
       [
         "expo-image-picker",

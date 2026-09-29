@@ -1,0 +1,19 @@
+@import '../../../styles/variables';
+
+.pinDisplay {
+  flexDirection: 'row';
+  alignItems: 'center';
+  alignSelf: 'center';
+  minWidth: 170;
+  height: 54;
+  borderRadius: $radius-md;
+  borderWidth: 1;
+  paddingHorizontal: 16;
+  marginTop: 18;
+}
+
+.pinDisplayValue {
+  fontSize: $font-body-lg;
+  fontWeight: $weight-semibold;
+  letterSpacing: 6;
+}

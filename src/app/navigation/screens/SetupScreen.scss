@@ -1,0 +1,104 @@
+@import '../../../styles/variables';
+
+.fill {
+  flex: 1;
+}
+
+.setup {
+  padding: 30;
+  paddingTop: 42;
+  paddingBottom: 20;
+}
+
+.title {
+  fontSize: $font-display;
+  fontWeight: $weight-bold;
+}
+
+.subtitle {
+  fontSize: $font-body-lg;
+  marginTop: 12;
+}
+
+.progress {
+  height: 7;
+  borderRadius: 5;
+  marginVertical: 25;
+}
+
+.progressFill {
+  width: '50%';
+  height: '100%';
+  borderRadius: 5;
+}
+
+.methodCard {
+  minHeight: 130;
+  borderRadius: $radius-xl;
+  borderWidth: 1;
+  marginBottom: 16;
+  padding: 20;
+  flexDirection: 'row';
+  alignItems: 'center';
+}
+
+.bigIcon {
+  width: 62;
+  height: 62;
+  borderRadius: 34;
+  fontSize: $font-glyph-lg;
+  textAlign: 'center';
+  textAlignVertical: 'center';
+}
+
+.methodCopy {
+  flex: 1;
+  paddingHorizontal: 18;
+}
+
+.methodTitle {
+  fontSize: $font-title;
+  fontWeight: $weight-bold;
+}
+
+.methodDescription {
+  fontSize: $font-body;
+  marginTop: 7;
+}
+
+.recommended {
+  fontSize: $font-label;
+}
+
+.radio {
+  width: 27;
+  height: 27;
+  borderRadius: 20;
+  borderWidth: 2;
+}
+
+.note {
+  fontSize: $font-body;
+  marginTop: 8;
+}
+
+.continue {
+  height: 64;
+  borderWidth: 1.5;
+  borderRadius: 17;
+  margin: 30;
+  alignItems: 'center';
+  justifyContent: 'center';
+  flexDirection: 'row';
+}
+
+.tealText {
+  fontWeight: $weight-bold;
+  fontSize: $font-body-lg;
+}
+
+.arrow {
+  position: 'absolute';
+  right: 20;
+  fontSize: $font-glyph-lg;
+}

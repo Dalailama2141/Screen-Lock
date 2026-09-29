@@ -1,12 +1,6 @@
 import { Platform } from 'react-native';
 import type { LockMethod } from '../types';
 
-export type User = {
-  _id: string;
-  name: string;
-  email: string;
-};
-
 export type LockSettings = { deviceId: string; method: LockMethod };
 
 const defaultApiUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
@@ -53,13 +47,6 @@ export async function getLockSettings(deviceId: string): Promise<LockSettings | 
   }
 }
 
-export function saveLockCredential(deviceId: string, method: LockMethod, credential: string): Promise<LockSettings> {
-  return request<LockSettings>(`/lock-credentials/${encodeURIComponent(deviceId)}`, {
-    method: 'PUT',
-    body: JSON.stringify({ method, credential }),
-  });
-}
-
 export async function deleteLockCredential(deviceId: string): Promise<{ deleted: boolean }> {
   try {
     return await request<{ deleted: boolean }>(`/lock-credentials/${encodeURIComponent(deviceId)}`, {
@@ -71,23 +58,4 @@ export async function deleteLockCredential(deviceId: string): Promise<{ deleted:
     }
     throw error;
   }
-}
-
-export async function verifyLockCredential(deviceId: string, credential: string): Promise<boolean> {
-  const result = await request<{ valid: boolean }>(`/lock-credentials/${encodeURIComponent(deviceId)}/verify`, {
-    method: 'POST',
-    body: JSON.stringify({ credential }),
-  });
-  return result.valid;
-}
-
-export function getUsers(): Promise<User[]> {
-  return request<User[]>('/users');
-}
-
-export function createUser(name: string, email: string): Promise<User> {
-  return request<User>('/users', {
-    method: 'POST',
-    body: JSON.stringify({ name, email }),
-  });
 }

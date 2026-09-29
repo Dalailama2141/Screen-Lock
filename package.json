@@ -4,10 +4,9 @@
   "private": true,
   "main": "index.js",
   "scripts": {
-    "start": "expo start --dev-client --port 8081",
-    "android": "expo run:android --port 8081",
-    "android:bundle": "node -e \"const fs=require('fs'); fs.mkdirSync('android/app/src/main/assets',{recursive:true});\" && react-native bundle --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res",
-    "android:release": "npm run android:bundle && expo run:android --variant release",
+    "start": "cross-env NODE_OPTIONS=--max-old-space-size=1024 expo start --dev-client --port 8081",
+    "android": "cross-env NODE_OPTIONS=--max-old-space-size=1024 expo run:android --port 8081",
+    "android:release": "cross-env NODE_ENV=production NODE_OPTIONS=--max-old-space-size=1280 expo run:android --variant release",
     "ios": "expo run:ios",
     "web": "expo start --web",
     "backend": "node backend/server.js",
@@ -32,6 +31,8 @@
   "devDependencies": {
     "@react-native-community/cli": "^20.2.0",
     "@types/react": "~19.0.10",
+    "cross-env": "^10.1.0",
+    "sass": "^1.105.0",
     "typescript": "~5.8.3"
   }
 }

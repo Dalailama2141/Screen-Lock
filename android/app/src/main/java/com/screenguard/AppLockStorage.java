@@ -17,7 +17,10 @@ final class AppLockStorage {
     private static final String KEY_PENDING_PACKAGE = "pending_package";
     private static final String KEY_PROTECTION_ENABLED = "protection_enabled";
     private static final String KEY_SESSION_UNLOCKED = "session_unlocked";
+    private static final String KEY_SESSION_PACKAGE = "session_package";
+    private static final String KEY_SESSION_STARTED_AT = "session_started_at";
     private static final String TEMPORARY_UNLOCK_PREFIX = "temporary_unlock_";
+    private static final long SESSION_TTL_MS = 120000L;
 
     private AppLockStorage() {
     }
@@ -105,12 +108,48 @@ final class AppLockStorage {
         return AppLockMonitorService.isRunning();
     }
 
-    static void setSessionUnlocked(Context context, boolean unlocked) {
-        preferences(context).edit().putBoolean(KEY_SESSION_UNLOCKED, unlocked).apply();
+    static void beginSession(Context context, String packageName) {
+        if (packageName == null || packageName.isEmpty()) {
+            clearLockSession(context);
+            return;
+        }
+        preferences(context).edit()
+                .putBoolean(KEY_SESSION_UNLOCKED, true)
+                .putString(KEY_SESSION_PACKAGE, packageName)
+                .putLong(KEY_SESSION_STARTED_AT, System.currentTimeMillis())
+                .apply();
     }
 
-    static boolean isSessionUnlocked(Context context) {
-        return preferences(context).getBoolean(KEY_SESSION_UNLOCKED, false);
+    /**
+     * A session only suppresses the lock for the exact app it was granted for, and only
+     * while it is fresh. Without this, a session started by one unlock silently disabled
+     * protection for every other app until something explicitly cleared it.
+     */
+    static boolean isSessionUnlockedFor(Context context, String packageName) {
+        SharedPreferences preferences = preferences(context);
+        if (!preferences.getBoolean(KEY_SESSION_UNLOCKED, false)) return false;
+
+        long startedAt = preferences.getLong(KEY_SESSION_STARTED_AT, 0L);
+        String sessionPackage = preferences.getString(KEY_SESSION_PACKAGE, null);
+        if (startedAt <= 0L || sessionPackage == null || !sessionPackage.equals(packageName)) return false;
+        if (System.currentTimeMillis() - startedAt > SESSION_TTL_MS) {
+            clearLockSession(context);
+            return false;
+        }
+        return true;
+    }
+
+    /** Drops the unlock session plus every temporary grant. Used on close, reset and setup. */
+    static void clearLockSession(Context context) {
+        SharedPreferences preferences = preferences(context);
+        SharedPreferences.Editor editor = preferences.edit()
+                .remove(KEY_SESSION_UNLOCKED)
+                .remove(KEY_SESSION_PACKAGE)
+                .remove(KEY_SESSION_STARTED_AT);
+        for (String key : preferences.getAll().keySet()) {
+            if (key.startsWith(TEMPORARY_UNLOCK_PREFIX)) editor.remove(key);
+        }
+        editor.apply();
     }
 
     static void setProtectionEnabled(Context context, boolean enabled) {

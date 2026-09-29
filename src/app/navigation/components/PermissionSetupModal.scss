@@ -1,0 +1,97 @@
+@import '../../../styles/variables';
+
+.modalBackdrop {
+  position: 'absolute';
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  backgroundColor: 'rgba(0, 0, 0, 0.7)';
+  alignItems: 'center';
+  justifyContent: 'center';
+  padding: 22;
+  zIndex: 50;
+}
+
+.modalCard {
+  width: '100%';
+  maxWidth: 420;
+  borderRadius: 22;
+  backgroundColor: $panel;
+  borderWidth: 1;
+  borderColor: $border;
+  padding: 20;
+}
+
+.modalTitle {
+  color: $text;
+  fontSize: $font-title;
+  fontWeight: $weight-bold;
+}
+
+.modalText {
+  color: $muted;
+  fontSize: $font-body;
+  lineHeight: $line-body;
+  marginTop: 6;
+  marginBottom: 6;
+}
+
+.modalRow {
+  flexDirection: 'row';
+  alignItems: 'center';
+  paddingVertical: 12;
+  borderBottomWidth: 1;
+  borderBottomColor: $border;
+}
+
+.modalRowCopy {
+  flex: 1;
+  paddingRight: 10;
+}
+
+.modalRowTitle {
+  color: $text;
+  fontSize: $font-body-lg;
+  fontWeight: $weight-semibold;
+}
+
+.modalRowText {
+  color: $muted;
+  fontSize: $font-label;
+  marginTop: 2;
+}
+
+.modalButton {
+  minHeight: 34;
+  borderRadius: $radius-sm;
+  borderWidth: 1;
+  borderColor: $teal;
+  paddingHorizontal: 12;
+  alignItems: 'center';
+  justifyContent: 'center';
+}
+
+.modalButtonText {
+  color: $teal;
+  fontSize: $font-caption;
+  fontWeight: $weight-bold;
+}
+
+.modalGranted {
+  color: $teal;
+  fontSize: $font-caption;
+  fontWeight: $weight-bold;
+}
+
+.modalDismiss {
+  alignItems: 'center';
+  paddingVertical: 14;
+  marginTop: 4;
+}
+
+.modalDismissText {
+  color: $muted;
+  fontSize: $font-body;
+  fontWeight: $weight-semibold;
+}

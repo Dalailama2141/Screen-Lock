@@ -61,7 +61,7 @@ public class AppLockMonitorService extends Service {
 
     static void dismissAndGoHome(Context context) {
         hideOverlay();
-        AppLockStorage.setSessionUnlocked(context, false);
+        AppLockStorage.clearLockSession(context);
         Intent homeIntent = new Intent(Intent.ACTION_MAIN);
         homeIntent.addCategory(Intent.CATEGORY_HOME);
         homeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -70,7 +70,7 @@ public class AppLockMonitorService extends Service {
 
     static void allowAndLaunch(Context context, String packageName, long durationMs) {
         AppLockStorage.allowTemporarily(context, packageName, Math.max(1000L, durationMs));
-        AppLockStorage.setSessionUnlocked(context, true);
+        AppLockStorage.beginSession(context, packageName);
         hideOverlay();
         Intent launchIntent = context.getPackageManager().getLaunchIntentForPackage(packageName);
         if (launchIntent == null) {
@@ -155,11 +155,11 @@ public class AppLockMonitorService extends Service {
             return;
         }
         if (!AppLockStorage.hasUsageAccess(this)) return;
-        if (AppLockStorage.isSessionUnlocked(this)) return;
 
         String foregroundPackage = getForegroundPackage();
         if (foregroundPackage == null || foregroundPackage.equals(getPackageName())) return;
         if (!AppLockStorage.isProtected(this, foregroundPackage)) return;
+        if (AppLockStorage.isSessionUnlockedFor(this, foregroundPackage)) return;
         if (AppLockStorage.isTemporarilyUnlocked(this, foregroundPackage)) return;
 
         long now = System.currentTimeMillis();

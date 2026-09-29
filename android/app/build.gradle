@@ -100,6 +100,10 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0.0"
+        ndk {
+            // Restrict native libs to modern phones + emulators to cut APK size.
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
     }
     signingConfigs {
         debug {

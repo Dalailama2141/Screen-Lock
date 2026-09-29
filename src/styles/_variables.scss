@@ -1,0 +1,42 @@
+// Shared SCSS variables for Screen Guard components.
+// Theme-dependent colors (light/dark) are applied inline at runtime via props;
+// these are defaults for static structural styles.
+
+$bg: #020b1b;
+$panel: #081525;
+$border: #203149;
+$text: #f5f7fb;
+$muted: #aeb7c9;
+$teal: #26e4d5;
+$danger: #ff5261;
+
+$radius-sm: 10px;
+$radius-md: 14px;
+$radius-lg: 18px;
+$radius-xl: 22px;
+
+// Type scale. Every piece of text in the app picks one of these sizes and one of these
+// weights so screens stay typographically consistent. Icon glyphs (the diamond, magnifier,
+// chevron, fingerprint, pad keys and the biometric orb) are the only deliberate exception
+// and use the larger $glyph-* sizes.
+$font-display: 28px;
+$font-title: 20px;
+$font-section: 17px;
+$font-body-lg: 16px;
+$font-body: 15px;
+$font-label: 13px;
+$font-caption: 12px;
+$font-micro: 11px;
+
+$font-stat: 30px;
+$font-glyph-sm: 16px;
+$font-glyph: 22px;
+$font-glyph-lg: 26px;
+
+$weight-regular: '400';
+$weight-medium: '500';
+$weight-semibold: '600';
+$weight-bold: '700';
+
+$line-body: 22px;
+$line-tight: 18px;
