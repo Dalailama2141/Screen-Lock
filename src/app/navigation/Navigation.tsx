@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, Image, ImageBackground, PanResponder, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
-import { checkNotificationPermission, clearSessionUnlock, consumePendingLockPackage, dismissLockOverlay, getAppIcon, getAppLockPermissionStatus, getAppUsage, getNativeProtectedApps, hideLockOverlay, openOverlaySettings, openProtectedApp, openUsageAccessSettings, requestNotificationPermission, setNativeProtectedApps, startAppLockProtection, stopAppLockProtection, type AppUsageStat } from '../../services/native/appLock';
+import { checkNotificationPermission, clearSessionUnlock, consumePendingLockPackage, dismissLockOverlay, getAppLockPermissionStatus, getAppUsage, getNativeProtectedApps, hideLockOverlay, openOverlaySettings, openProtectedApp, openUsageAccessSettings, requestNotificationPermission, setNativeProtectedApps, startAppLockProtection, stopAppLockProtection, type AppUsageStat } from '../../services/native/appLock';
 import { getInstalledApps, launchInstalledApp } from '../../services/native/installedApps';
 import { deleteLockCredential, getLockSettings } from '../../services/api';
 import { createLocalLockCredential, deleteLocalLockCredential, getLocalLockMethod, hasLocalLockCredential, verifyLocalLockCredential } from '../../services/lockCredentials';
@@ -48,9 +48,6 @@ const PATTERN_POINTS = Array.from({ length: 9 }, (_, index) => ({
   x: PATTERN_DOT_INSET + (index % 3) * PATTERN_DOT_STEP + PATTERN_DOT_SIZE / 2,
   y: PATTERN_DOT_INSET + Math.floor(index / 3) * PATTERN_DOT_STEP + PATTERN_DOT_SIZE / 2,
 }));
-
-const SELF_PACKAGE = 'com.screenguard';
-const SELF_APP: AppItem = { name: 'Screen Guard', packageName: SELF_PACKAGE, icon: '', color: '#26e4d5', mark: 'S', locked: true };
 
 function PermissionSetupModal({ overlayPermission, usageAccessGranted, notificationPermission, onOpenOverlay, onOpenUsage, onRequestNotification, onDismiss }: { overlayPermission: boolean; usageAccessGranted: boolean; notificationPermission: boolean; onOpenOverlay: () => void; onOpenUsage: () => void; onRequestNotification: () => void; onDismiss: () => void }) {
   return (
@@ -119,7 +116,6 @@ export function Navigation() {
   const [pickingWallpaper, setPickingWallpaper] = useState(false);
   const [usageStats, setUsageStats] = useState<AppUsageStat[]>([]);
   const [usageLoading, setUsageLoading] = useState(false);
-  const [selfAppItem, setSelfAppItem] = useState<AppItem>(SELF_APP);
   const [resettingPassword, setResettingPassword] = useState(false);
   const [remoteSyncAvailable, setRemoteSyncAvailable] = useState<boolean | null>(null);
   const [overlayPermission, setOverlayPermission] = useState(false);
@@ -129,8 +125,6 @@ export function Navigation() {
   const [permissionModalDismissed, setPermissionModalDismissed] = useState(false);
   const [pendingLockedPackage, setPendingLockedPackage] = useState<string | null>(null);
   const [lockTriggeredBySystem, setLockTriggeredBySystem] = useState(false);
-  const selfLockArmedRef = useRef(false);
-  const selfLockSatisfiedRef = useRef(false);
   const appsRef = useRef<AppItem[]>([]);
   const themeColors = themePalettes[theme];
   const wallpaperColors = wallpaperPalettes[wallpaper];
@@ -198,12 +192,6 @@ export function Navigation() {
     return () => { active = false; };
   }, []);
 
-  useEffect(() => {
-    void getAppIcon(SELF_PACKAGE).then((icon) => {
-      if (icon) setSelfAppItem({ ...SELF_APP, icon });
-    });
-  }, []);
-
   const refreshUsageStats = async () => {
     if (!usageAccessGranted) return;
     setUsageLoading(true);
@@ -238,15 +226,7 @@ export function Navigation() {
 
     void syncNativeState();
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
-        if (selfLockArmedRef.current && !selfLockSatisfiedRef.current && !lockedApp) {
-          setLockTriggeredBySystem(false);
-          setLockedApp(SELF_APP);
-        }
-        void syncNativeState();
-      } else {
-        selfLockSatisfiedRef.current = false;
-      }
+      if (state === 'active') void syncNativeState();
     });
     return () => subscription.remove();
   }, []);
@@ -263,17 +243,6 @@ export function Navigation() {
   useEffect(() => {
     if (lockedApp) void hideLockOverlay();
   }, [lockedApp]);
-
-  useEffect(() => {
-    if (setupComplete) selfLockArmedRef.current = true;
-  }, [setupComplete]);
-
-  useEffect(() => {
-    if (setupComplete && selfLockArmedRef.current && !selfLockSatisfiedRef.current) {
-      setLockTriggeredBySystem(false);
-      setLockedApp(SELF_APP);
-    }
-  }, [setupComplete]);
 
   useEffect(() => {
     const loadLockSettings = async () => {
@@ -358,7 +327,6 @@ export function Navigation() {
     await AsyncStorage.setItem(CREDENTIAL_METHOD_KEY, method);
     await AsyncStorage.setItem(SETUP_COMPLETE_KEY, 'true');
     await AsyncStorage.removeItem(LEGACY_CREDENTIAL_VALUE_KEY);
-    selfLockSatisfiedRef.current = true;
     setSetupComplete(true);
     setSetupStep('choose');
   };
@@ -471,14 +439,14 @@ export function Navigation() {
       case 'Statistics':
         return <StatisticsScreen apps={apps} usage={usageStats} loading={usageLoading} themeColors={themeColors} onRefresh={refreshUsageStats} />;
       case 'Settings':
-        return <SettingsScreen method={method} theme={theme} setTheme={setTheme} wallpaper={wallpaper} setWallpaper={setWallpaper} themeColors={themeColors} backgroundColor={appBackgroundColor} lockedApps={apps.filter((app) => app.locked)} commonWallpaper={commonWallpaper} pickingWallpaper={pickingWallpaper} onSelectWallpaper={selectCommonWallpaper} onRemoveWallpaper={removeCommonWallpaper} remoteSyncAvailable={remoteSyncAvailable} overlayPermission={overlayPermission} usageAccessGranted={usageAccessGranted} protectionActive={protectionActive} onOpenOverlaySettings={openOverlayPermissionSettings} onOpenUsageSettings={openUsagePermissionSettings} onToggleProtection={toggleProtection} onTestProtection={() => { void testAppLockProtection(); }} resettingPassword={resettingPassword} onResetPassword={confirmPasswordReset} onBack={() => setTab('Home')} />;
+        return <SettingsScreen method={method} theme={theme} setTheme={setTheme} wallpaper={wallpaper} setWallpaper={setWallpaper} themeColors={themeColors} backgroundColor={appBackgroundColor} lockedApps={apps.filter((app) => app.locked)} commonWallpaper={commonWallpaper} pickingWallpaper={pickingWallpaper} onSelectWallpaper={selectCommonWallpaper} onRemoveWallpaper={removeCommonWallpaper} remoteSyncAvailable={remoteSyncAvailable} overlayPermission={overlayPermission} usageAccessGranted={usageAccessGranted} protectionActive={protectionActive} onOpenOverlaySettings={openOverlayPermissionSettings} onOpenUsageSettings={openUsagePermissionSettings} onToggleProtection={toggleProtection} onTestProtection={() => { void testAppLockProtection(); }} resettingPassword={resettingPassword} onResetPassword={confirmPasswordReset} />;
       case 'Home':
       default:
         return <AppsScreen apps={visibleApps} totalCount={apps.length} lockedCount={lockedCount} loading={loadingApps} search={search} setSearch={setSearch} themeColors={themeColors} overlayPermission={overlayPermission} usageAccessGranted={usageAccessGranted} protectionActive={protectionActive} onOpenOverlaySettings={openOverlayPermissionSettings} onOpenUsageSettings={openUsagePermissionSettings} onToggleProtection={toggleProtection} onTestProtection={() => { void testAppLockProtection(); }} onToggle={toggleApp} onOpen={(app) => { setLockTriggeredBySystem(false); setLockedApp(app); }} />;
     }
   };
 
-  if (lockedApp) return <LockScreen app={lockedApp.packageName === SELF_PACKAGE ? selfAppItem : lockedApp} method={method} themeColors={themeColors} wallpaperUri={commonWallpaper ?? undefined} onUnlock={async () => { if (lockedApp.packageName === SELF_PACKAGE) { selfLockSatisfiedRef.current = true; setLockedApp(null); return; } try { await openProtectedApp(lockedApp.packageName); } catch (error) { Alert.alert('Unable to open app', error instanceof Error ? error.message : 'The selected app could not be opened.'); } finally { setLockTriggeredBySystem(false); setLockedApp(null); } }} onClose={() => { void clearSessionUnlock(); if (lockTriggeredBySystem || lockedApp.packageName === SELF_PACKAGE) void dismissLockOverlay(); setLockTriggeredBySystem(false); setLockedApp(null); }} />;
+  if (lockedApp) return <LockScreen app={lockedApp} method={method} themeColors={themeColors} wallpaperUri={commonWallpaper ?? undefined} onUnlock={async () => { try { await openProtectedApp(lockedApp.packageName); } catch (error) { Alert.alert('Unable to open app', error instanceof Error ? error.message : 'The selected app could not be opened.'); } finally { setLockTriggeredBySystem(false); setLockedApp(null); } }} onClose={() => { void clearSessionUnlock(); if (lockTriggeredBySystem) void dismissLockOverlay(); setLockTriggeredBySystem(false); setLockedApp(null); }} />;
 
   return <SafeAreaView style={[styles.safe, { backgroundColor: appBackgroundColor }]}><StatusBar barStyle={theme === 'Light' ? 'dark-content' : 'light-content'} backgroundColor={appBackgroundColor} />
     <View style={{ flex: 1, backgroundColor: appContentColor }}>
@@ -504,14 +472,13 @@ export function Navigation() {
   </SafeAreaView>;
 }
 
-function SettingsScreen({ method, theme, setTheme, wallpaper, setWallpaper, themeColors, backgroundColor, lockedApps, commonWallpaper, pickingWallpaper, onSelectWallpaper, onRemoveWallpaper, remoteSyncAvailable, overlayPermission, usageAccessGranted, protectionActive, onOpenOverlaySettings, onOpenUsageSettings, onToggleProtection, onTestProtection, resettingPassword, onResetPassword, onBack }: { method: LockMethod; theme: 'Dark' | 'Light' | 'System'; setTheme: (value: 'Dark' | 'Light' | 'System') => void; wallpaper: 'Night Glow' | 'Ocean' | 'Minimal'; setWallpaper: (value: 'Night Glow' | 'Ocean' | 'Minimal') => void; themeColors: ThemePalette; backgroundColor: string; lockedApps: AppItem[]; commonWallpaper: string | null; pickingWallpaper: boolean; onSelectWallpaper: () => void; onRemoveWallpaper: () => void; remoteSyncAvailable: boolean | null; overlayPermission: boolean; usageAccessGranted: boolean; protectionActive: boolean; onOpenOverlaySettings: () => void; onOpenUsageSettings: () => void; onToggleProtection: () => void; onTestProtection: () => void; resettingPassword: boolean; onResetPassword: () => void; onBack: () => void }) {
+function SettingsScreen({ method, theme, setTheme, wallpaper, setWallpaper, themeColors, backgroundColor, lockedApps, commonWallpaper, pickingWallpaper, onSelectWallpaper, onRemoveWallpaper, remoteSyncAvailable, overlayPermission, usageAccessGranted, protectionActive, onOpenOverlaySettings, onOpenUsageSettings, onToggleProtection, onTestProtection, resettingPassword, onResetPassword }: { method: LockMethod; theme: 'Dark' | 'Light' | 'System'; setTheme: (value: 'Dark' | 'Light' | 'System') => void; wallpaper: 'Night Glow' | 'Ocean' | 'Minimal'; setWallpaper: (value: 'Night Glow' | 'Ocean' | 'Minimal') => void; themeColors: ThemePalette; backgroundColor: string; lockedApps: AppItem[]; commonWallpaper: string | null; pickingWallpaper: boolean; onSelectWallpaper: () => void; onRemoveWallpaper: () => void; remoteSyncAvailable: boolean | null; overlayPermission: boolean; usageAccessGranted: boolean; protectionActive: boolean; onOpenOverlaySettings: () => void; onOpenUsageSettings: () => void; onToggleProtection: () => void; onTestProtection: () => void; resettingPassword: boolean; onResetPassword: () => void }) {
   const themes: Array<'Dark' | 'Light' | 'System'> = ['Dark', 'Light', 'System'];
   const wallpapers: Array<'Night Glow' | 'Ocean' | 'Minimal'> = ['Night Glow', 'Ocean', 'Minimal'];
 
   return <SafeAreaView style={[styles.safe, { backgroundColor }]}><StatusBar barStyle={theme === 'Light' ? 'dark-content' : 'light-content'} backgroundColor={backgroundColor} />
     <ScrollView contentContainerStyle={[styles.settingsPage, { backgroundColor }]}>
       <View style={styles.settingsHeader}>
-        <Pressable onPress={onBack}><Text style={[styles.link, { color: themeColors.teal }]}>← Back</Text></Pressable>
         <Text style={[styles.title, { color: themeColors.text }]}>Settings</Text>
       </View>
 
@@ -680,6 +647,11 @@ function HomeScreen({ lockedCount, onApps }: { lockedCount: number; onApps: () =
 function AppsScreen({ apps, totalCount, lockedCount, loading, search, setSearch, themeColors, overlayPermission, usageAccessGranted, protectionActive, onOpenOverlaySettings, onOpenUsageSettings, onToggleProtection, onTestProtection, onToggle, onOpen }: { apps: AppItem[]; totalCount: number; lockedCount: number; loading: boolean; search: string; setSearch: (value: string) => void; themeColors: ThemePalette; overlayPermission: boolean; usageAccessGranted: boolean; protectionActive: boolean; onOpenOverlaySettings: () => void; onOpenUsageSettings: () => void; onToggleProtection: () => void; onTestProtection: () => void; onToggle: (packageName: string) => void; onOpen: (app: AppItem) => void }) {
   return (
     <ScrollView contentContainerStyle={[styles.list, { backgroundColor: themeColors.bg }]} keyboardShouldPersistTaps="handled">
+      <View style={styles.brandRow}>
+        <Text style={[styles.brandDiamond, { color: themeColors.teal }]}>◆</Text>
+        <Text style={[styles.brandLabel, { color: themeColors.text }]}>Screen Lock</Text>
+      </View>
+
       <View style={[styles.appsHero, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}>
         <View style={styles.appsHeroCopy}>
           <Text style={[styles.appsHeroTitle, { color: themeColors.text }]}>Protected apps</Text>
@@ -796,6 +768,12 @@ function StatisticsScreen({ apps, usage, loading, themeColors, onRefresh }: { ap
     }, undefined);
   const topApp = apps.find((app) => app.packageName === topStat?.packageName);
   const averageMillis = days.length > 0 ? totalMillis / days.length : 0;
+  const usageValueFor = (packageName: string) => {
+    const stat = usage.find((item) => item.packageName === packageName);
+    if (selectedDay === null) return stat?.totalMillis ?? 0;
+    return stat?.daily[selectedDay]?.millis ?? 0;
+  };
+  const sortedApps = [...apps].sort((left, right) => usageValueFor(right.packageName) - usageValueFor(left.packageName));
 
   return (
     <ScrollView contentContainerStyle={[styles.activity, { backgroundColor: themeColors.bg }]}>
@@ -854,7 +832,7 @@ function StatisticsScreen({ apps, usage, loading, themeColors, onRefresh }: { ap
       <Text style={[styles.sectionTitle, { color: themeColors.text, marginTop: 18 }]}>Per app</Text>
       {apps.length === 0 ? (
         <Text style={[styles.package, { color: themeColors.muted }]}>No installed apps found.</Text>
-      ) : apps.map((app) => {
+      ) : sortedApps.map((app) => {
         const stat = usage.find((item) => item.packageName === app.packageName);
         const appMax = Math.max(...(stat?.daily.map((day) => day.millis) ?? [0]), 1);
         return (
@@ -1299,6 +1277,9 @@ const styles = StyleSheet.create({
   home: { padding: 30, paddingTop: 65, flexGrow: 1 },
   homePanel: { backgroundColor: screenGuardColors.panel, borderRadius: 18, borderWidth: 1, borderColor: screenGuardColors.border, padding: 18, marginVertical: 12 },
   list: { padding: 20, paddingBottom: 110 },
+  brandRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+  brandDiamond: { fontSize: 20, marginRight: 8 },
+  brandLabel: { fontSize: 22, fontWeight: '800' },
   appsHero: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: screenGuardColors.panel, borderRadius: 20, borderWidth: 1, borderColor: screenGuardColors.border, padding: 18, marginBottom: 16 },
   appsHeroCopy: { flex: 1, paddingRight: 14 },
   appsHeroTitle: { color: screenGuardColors.text, fontSize: 23, fontWeight: '800' },

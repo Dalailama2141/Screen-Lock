@@ -12,6 +12,7 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.PorterDuff;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -20,6 +21,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import java.lang.ref.WeakReference;
@@ -203,18 +205,21 @@ public class AppLockMonitorService extends Service {
         overlay.setGravity(Gravity.CENTER);
         overlay.setBackgroundColor(Color.rgb(2, 11, 27));
 
-        TextView icon = new TextView(this);
-        icon.setText("●");
-        icon.setTextColor(Color.rgb(38, 228, 213));
-        icon.setTextSize(44);
-        icon.setGravity(Gravity.CENTER);
-        overlay.addView(icon, new LinearLayout.LayoutParams(
+        ProgressBar loader = new ProgressBar(this);
+        loader.setIndeterminate(true);
+        if (loader.getIndeterminateDrawable() != null) {
+            loader.getIndeterminateDrawable().setColorFilter(Color.rgb(38, 228, 213), PorterDuff.Mode.SRC_IN);
+        }
+        LinearLayout.LayoutParams loaderParams = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+        );
+        loaderParams.bottomMargin = 28;
+        overlay.addView(loader, loaderParams);
 
         TextView message = new TextView(this);
-        message.setText("Screen Guard\nVerifying " + packageName);
+        message.setText("Screen Guard\nVerifying app lock…");
         message.setTextColor(Color.WHITE);
         message.setTextSize(18);
         message.setGravity(Gravity.CENTER);
