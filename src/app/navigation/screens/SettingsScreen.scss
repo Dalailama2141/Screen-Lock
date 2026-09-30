@@ -157,6 +157,63 @@
   textAlign: 'center';
 }
 
+.themeRowCopy {
+  flex: 1;
+  paddingRight: 10;
+}
+
+.themeRowPreview {
+  flexDirection: 'row';
+  alignItems: 'center';
+}
+
+.themeRowSwatch {
+  width: 22;
+  height: 22;
+  borderRadius: 6;
+  borderWidth: 1;
+  borderColor: 'rgba(127, 145, 170, 0.35)';
+  marginRight: 9;
+}
+
+.themePageHeader {
+  paddingHorizontal: 20;
+  paddingTop: 12;
+  paddingBottom: 16;
+}
+
+.themeBackButton {
+  marginBottom: 10;
+}
+
+.themePageContent {
+  paddingHorizontal: 20;
+  paddingBottom: 40;
+}
+
+.starRow {
+  flexDirection: 'row';
+  justifyContent: 'center';
+  marginTop: 18;
+}
+
+.starButton {
+  padding: 6;
+}
+
+.starGlyph {
+  fontSize: 38;
+  lineHeight: 44;
+}
+
+.disabledButton {
+  opacity: 0.4;
+}
+
+.disabledText {
+  opacity: 0.6;
+}
+
 .aboutBackdrop {
   flex: 1;
   backgroundColor: 'rgba(2, 11, 27, 0.78)';

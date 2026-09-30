@@ -202,9 +202,11 @@ public class AppLockMonitorService extends Service {
 
     /** Picks black or white overlay text so the label stays readable on light accents. */
     private static int readableForeground(int background) {
-        float[] hsl = new float[3];
-        Color.colorToHSL(background, hsl);
-        return hsl[2] > 0.55f ? FOREGROUND_DARK : FOREGROUND_LIGHT;
+        int red = Color.red(background);
+        int green = Color.green(background);
+        int blue = Color.blue(background);
+        double luminance = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255.0;
+        return luminance > 0.55 ? FOREGROUND_DARK : FOREGROUND_LIGHT;
     }
 
     private void showOverlay(String packageName) {

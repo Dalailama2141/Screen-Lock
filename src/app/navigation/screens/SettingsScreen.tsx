@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Image, Linking, Modal, Pressable, SafeAreaView, ScrollView, StatusBar, Text, View } from 'react-native';
+import { Image, Modal, Pressable, SafeAreaView, ScrollView, StatusBar, Text, View } from 'react-native';
 import type { LockMethod } from '../../../types';
 import { aboutEntries, aboutEntriesById, type AboutTopic } from '../aboutContent';
 import { accentColor, accentNames } from '../shared';
@@ -29,19 +29,23 @@ type SettingsScreenProps = {
 };
 
 const THEMES: Array<'Dark' | 'Light' | 'System'> = ['Dark', 'Light', 'System'];
-const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.screenguard';
+const RATING_MAX = 5;
 
 export function SettingsScreen({ method, theme, setTheme, accent, setAccent, themeColors, backgroundColor, lockedApps, commonWallpaper, pickingWallpaper, onSelectWallpaper, onRemoveWallpaper, remoteSyncAvailable, overlayPermission, usageAccessGranted, onOpenOverlaySettings, onOpenUsageSettings, resettingPassword, onResetPassword }: SettingsScreenProps) {
   const [aboutTopic, setAboutTopic] = useState<AboutTopic | null>(null);
-  const [rateError, setRateError] = useState('');
+  const [showThemes, setShowThemes] = useState(false);
+  const [rating, setRating] = useState(0);
+  const [submittedRating, setSubmittedRating] = useState(false);
 
-  const openRateUs = async () => {
-    try {
-      await Linking.openURL(PLAY_STORE_URL);
-      setRateError('');
-    } catch {
-      setRateError('The Play Store app is not available on this device.');
-    }
+  // A rating is kept on the device only. Nothing is uploaded and there is no store link to follow.
+  const openRateUs = () => {
+    setSubmittedRating(false);
+    setRating(0);
+  };
+
+  const submitRating = () => {
+    if (rating === 0) return;
+    setSubmittedRating(true);
   };
 
   const aboutEntry = aboutTopic ? aboutEntriesById[aboutTopic] : null;
@@ -98,7 +102,6 @@ export function SettingsScreen({ method, theme, setTheme, accent, setAccent, the
             </View>
             <Text style={[styles.link, { color: usageAccessGranted ? themeColors.teal : themeColors.danger }]}>{usageAccessGranted ? 'Granted' : 'Grant'}</Text>
           </Pressable>
-          <Text style={[styles.infoText, { color: themeColors.muted }]}>The monitor only reads the current foreground package name so it can show your lock screen. It does not read screen content.</Text>
         </View>
 
         <View style={[styles.settingsCard, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}> 
@@ -113,25 +116,16 @@ export function SettingsScreen({ method, theme, setTheme, accent, setAccent, the
 
         <View style={[styles.settingsCard, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}> 
           <Text style={[styles.sectionTitle, { color: themeColors.text }]}>Theme</Text>
-          <Text style={[styles.infoText, { color: themeColors.muted, marginBottom: 12 }]}>The colour you pick is used as the background of Screen Guard and of every app lock screen.</Text>
-          <View style={styles.themeGrid}>
-            {accentNames.map((name) => {
-              const palette = accentColor(name);
-              const selected = name === accent;
-              return (
-                <Pressable
-                  key={name}
-                  onPress={() => setAccent(name)}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected }}
-                  accessibilityLabel={`${name} theme`}
-                  style={[styles.themeSwatch, { backgroundColor: palette.bg, borderColor: selected ? themeColors.teal : 'rgba(127, 145, 170, 0.35)' }, selected && styles.themeSwatchSelected]}
-                >
-                  <Text style={[styles.themeSwatchLabel, { color: palette.on }]}>{name}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
+          <Pressable onPress={() => setShowThemes(true)} style={[styles.settingsRow, { borderBottomColor: themeColors.border }]}>
+            <View style={styles.themeRowCopy}>
+              <Text style={[styles.appName, { color: themeColors.text }]}>Lock screen colour</Text>
+              <Text style={[styles.appState, { color: themeColors.muted }]}>Used on the lock screen shown when a protected app opens</Text>
+            </View>
+            <View style={styles.themeRowPreview}>
+              <View style={[styles.themeRowSwatch, { backgroundColor: accentColor(accent).bg }]} />
+              <Text style={[styles.link, { color: themeColors.teal }]}>{accent}</Text>
+            </View>
+          </Pressable>
         </View>
 
         <View style={[styles.settingsCard, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}> 
@@ -167,16 +161,15 @@ export function SettingsScreen({ method, theme, setTheme, accent, setAccent, the
         <View style={[styles.settingsCard, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]}>
           <Text style={[styles.sectionTitle, { color: themeColors.text }]}>About</Text>
           {aboutEntries.map((entry) => (
-            <Pressable key={entry.id} onPress={() => { setAboutTopic(entry.id); setRateError(''); }} style={[styles.settingsRow, { borderBottomColor: themeColors.border }]}>
+            <Pressable key={entry.id} onPress={() => setAboutTopic(entry.id)} style={[styles.settingsRow, { borderBottomColor: themeColors.border }]}>
               <Text style={[styles.appName, { color: themeColors.text }]}>{entry.title}</Text>
               <Text style={[styles.link, { color: themeColors.teal }]}>View</Text>
             </Pressable>
           ))}
-          <Pressable onPress={() => { void openRateUs(); }} style={[styles.settingsRow, { borderBottomColor: themeColors.border }]}>
+          <Pressable onPress={openRateUs} style={[styles.settingsRow, { borderBottomColor: themeColors.border }]}>
             <Text style={[styles.appName, { color: themeColors.text }]}>Rate us</Text>
-            <Text style={[styles.link, { color: themeColors.teal }]}>Play Store</Text>
+            <Text style={[styles.link, { color: themeColors.teal }]}>Rate</Text>
           </Pressable>
-          {rateError ? <Text style={[styles.infoText, { color: themeColors.danger, marginTop: 10 }]}>{rateError}</Text> : null}
         </View>
       </ScrollView>
 
@@ -188,10 +181,83 @@ export function SettingsScreen({ method, theme, setTheme, accent, setAccent, the
               <Text style={[styles.aboutBody, { color: themeColors.muted }]}>{aboutEntry?.body}</Text>
             </ScrollView>
             <Pressable onPress={() => setAboutTopic(null)} style={[styles.aboutClose, { borderColor: themeColors.teal }]}>
-              <Text style={[styles.aboutCloseText, { color: themeColors.teal }]}>Close</Text>
+              <Text style={[styles.aboutCloseText, { color: themeColors.teal }]}>{aboutEntry?.id === 'terms' ? 'OK' : 'Close'}</Text>
             </Pressable>
           </View>
         </View>
+      </Modal>
+
+      <Modal visible={!aboutEntry} transparent animationType="fade" onRequestClose={() => { setRating(0); }}>
+        <Pressable style={styles.aboutBackdrop} onPress={() => setRating(0)}>
+          <Pressable style={[styles.aboutCard, { backgroundColor: themeColors.panel, borderColor: themeColors.border }]} onPress={() => {}}>
+            <Text style={[styles.aboutTitle, { color: themeColors.text }]}>Rate us</Text>
+            {submittedRating ? (
+              <>
+                <Text style={[styles.aboutBody, { color: themeColors.muted }]}>Thank you for rating Screen Guard {rating} out of {RATING_MAX}.</Text>
+                <Pressable onPress={() => setRating(0)} style={[styles.aboutClose, { borderColor: themeColors.teal }]}>
+                  <Text style={[styles.aboutCloseText, { color: themeColors.teal }]}>OK</Text>
+                </Pressable>
+              </>
+            ) : (
+              <>
+                <Text style={[styles.aboutBody, { color: themeColors.muted }]}>Tap a star to rate Screen Guard out of {RATING_MAX}.</Text>
+                <View style={styles.starRow}>
+                  {Array.from({ length: RATING_MAX }, (_, index) => {
+                    const value = index + 1;
+                    const filled = value <= rating;
+                    return (
+                      <Pressable
+                        key={value}
+                        onPress={() => setRating(value)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${value} star${value === 1 ? '' : 's'}`}
+                        style={styles.starButton}
+                      >
+                        <Text style={[styles.starGlyph, { color: filled ? themeColors.teal : themeColors.muted }]}>{filled ? '★' : '☆'}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Pressable disabled={rating === 0} onPress={submitRating} style={[styles.aboutClose, { borderColor: themeColors.teal }, rating === 0 && styles.disabledButton]}>
+                  <Text style={[styles.aboutCloseText, { color: themeColors.teal }, rating === 0 && styles.disabledText]}>Submit</Text>
+                </Pressable>
+              </>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={showThemes} animationType="slide" onRequestClose={() => setShowThemes(false)}>
+        <SafeAreaView style={[styles.safe, { backgroundColor }]}>
+          <StatusBar barStyle={theme === 'Light' ? 'dark-content' : 'light-content'} backgroundColor={backgroundColor} />
+          <View style={styles.themePageHeader}>
+            <Pressable onPress={() => setShowThemes(false)} style={styles.themeBackButton}>
+              <Text style={[styles.link, { color: themeColors.teal }]}>← Back</Text>
+            </Pressable>
+            <Text style={[styles.title, { color: themeColors.text }]}>Supported themes</Text>
+            <Text style={[styles.appState, { color: themeColors.muted }]}>The colour you pick is used as the background of the lock screen shown when a protected app opens.</Text>
+          </View>
+          <ScrollView contentContainerStyle={styles.themePageContent}>
+            <View style={styles.themeGrid}>
+              {accentNames.map((name) => {
+                const palette = accentColor(name);
+                const selected = name === accent;
+                return (
+                  <Pressable
+                    key={name}
+                    onPress={() => setAccent(name)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={`${name} theme`}
+                    style={[styles.themeSwatch, { backgroundColor: palette.bg, borderColor: selected ? themeColors.teal : 'rgba(127, 145, 170, 0.35)' }, selected && styles.themeSwatchSelected]}
+                  >
+                    <Text style={[styles.themeSwatchLabel, { color: palette.on }]}>{name}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </ScrollView>
+        </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );

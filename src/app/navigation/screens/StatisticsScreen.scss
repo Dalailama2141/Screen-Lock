@@ -140,6 +140,31 @@
   marginTop: 1;
 }
 
+.horizontalBarWrap {
+  flexDirection: 'row';
+  alignItems: 'center';
+  marginTop: 14;
+}
+
+.horizontalBarTrack {
+  flex: 1;
+  height: 12;
+  borderRadius: 6;
+  overflow: 'hidden';
+}
+
+.horizontalBarFill {
+  height: '100%';
+  borderRadius: 6;
+}
+
+.horizontalBarValue {
+  fontSize: $font-caption;
+  marginLeft: 10;
+  minWidth: 44;
+  textAlign: 'right';
+}
+
 .appContent {
   flexDirection: 'row';
   alignItems: 'center';

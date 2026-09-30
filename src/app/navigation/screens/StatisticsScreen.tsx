@@ -89,9 +89,10 @@ export function StatisticsScreen({ apps, usage, loading, themeColors }: Statisti
       ) : sortedApps.map((app) => {
         const stat = usage.find((item) => item.packageName === app.packageName);
         const daily = stat?.daily ?? [];
-        // On a single day there is nothing to compare against, so one bar is shown instead of
-        // the full week, scaled against the busiest app that day to stay comparable across apps.
-        const visibleDays = selectedDay === null ? daily : daily.filter((_, dayIndex) => dayIndex === selectedDay);
+        // On a single day there is nothing to compare against, so one horizontal bar is shown
+        // instead of the full week, scaled against the busiest app that day so the bars stay
+        // comparable from one app to the next.
+        const dayMillis = selectedDay === null ? 0 : (stat?.daily[selectedDay]?.millis ?? 0);
         const appMax = selectedDay === null
           ? Math.max(...daily.map((day) => day.millis), 1)
           : Math.max(...usage.map((item) => item.daily[selectedDay]?.millis ?? 0), 1);
@@ -104,21 +105,29 @@ export function StatisticsScreen({ apps, usage, loading, themeColors }: Statisti
                 <Text style={[styles.appState, { color: themeColors.muted }]}>{selectedDay === null ? `Total ${formatDuration(stat?.totalMillis ?? 0)}` : `${stat?.daily[selectedDay]?.date.slice(5).replace('-', '/') ?? ''} · ${formatDuration(stat?.daily[selectedDay]?.millis ?? 0)}`}</Text>
               </View>
             </View>
-            <View style={styles.chartRow}>
-              {visibleDays.map((day) => {
-                const height = Math.max(4, Math.round((day.millis / appMax) * 44));
-                const isSelected = selectedDay !== null && day.date === stat?.daily[selectedDay]?.date;
-                return (
-                  <View key={day.date} style={styles.miniChartColumn}>
-                    <View style={[styles.miniChartTrack, { backgroundColor: themeColors.bg }, isSelected && { borderColor: themeColors.teal, borderWidth: 1 }]}>
-                      <View style={[styles.miniChartBar, { height, backgroundColor: selectedDay === null || isSelected ? themeColors.teal : themeColors.border }]} />
+            {selectedDay === null ? (
+              <View style={styles.chartRow}>
+                {daily.map((day) => {
+                  const height = Math.max(4, Math.round((day.millis / appMax) * 44));
+                  return (
+                    <View key={day.date} style={styles.miniChartColumn}>
+                      <View style={[styles.miniChartTrack, { backgroundColor: themeColors.bg }]}>
+                        <View style={[styles.miniChartBar, { height, backgroundColor: themeColors.teal }]} />
+                      </View>
+                      <Text style={[styles.miniChartLabel, { color: themeColors.muted }]}>{day.date.slice(5).replace('-', '/')}</Text>
+                      <Text style={[styles.miniChartValue, { color: themeColors.muted }]}>{formatDuration(day.millis)}</Text>
                     </View>
-                    <Text style={[styles.miniChartLabel, { color: themeColors.muted }]}>{day.date.slice(5).replace('-', '/')}</Text>
-                    <Text style={[styles.miniChartValue, { color: themeColors.muted }]}>{formatDuration(day.millis)}</Text>
-                  </View>
-                );
-              })}
-            </View>
+                  );
+                })}
+              </View>
+            ) : (
+              <View style={styles.horizontalBarWrap}>
+                <View style={[styles.horizontalBarTrack, { backgroundColor: themeColors.bg }]}>
+                  <View style={[styles.horizontalBarFill, { width: `${Math.max(2, Math.round((dayMillis / appMax) * 100))}%`, backgroundColor: themeColors.teal }]} />
+                </View>
+                <Text style={[styles.horizontalBarValue, { color: themeColors.muted }]}>{formatDuration(dayMillis)}</Text>
+              </View>
+            )}
           </View>
         );
       })}

@@ -68,8 +68,10 @@ export function Navigation() {
   const appsRef = useRef<AppItem[]>([]);
   const themeColors = themePalettes[theme];
   const accentPalette = accentColor(accent);
-  const appBackgroundColor = theme === 'Light' ? '#ffffff' : accentPalette.bg;
-  const appContentColor = theme === 'Light' ? '#ffffff' : accentPalette.veil;
+  // The accent colour is scoped to the lock screen only. The app shell keeps its theme palette so
+  // picking a lock colour never restyles Settings, Statistics or the app list.
+  const appBackgroundColor = themeColors.bg;
+  const appContentColor = themeColors.bg;
   const lockedCount = apps.filter((app) => app.locked).length;
   const visibleApps = useMemo(() => apps.filter((app) => app.name.toLowerCase().includes(search.toLowerCase())), [apps, search]);
   appsRef.current = apps;
@@ -420,7 +422,7 @@ export function Navigation() {
     }
   };
 
-  if (lockedApp) return <LockScreen app={lockedApp.packageName === SELF_PACKAGE ? selfAppItem : lockedApp} method={method} themeColors={themeColors} backgroundColor={appBackgroundColor} onColor={accentPalette.on} wallpaperUri={commonWallpaper ?? undefined} onUnlock={async () => { if (lockedApp.packageName === SELF_PACKAGE) { selfLockSatisfiedRef.current = true; setLockedApp(null); return; } try { await openProtectedApp(lockedApp.packageName); } catch (error) { Alert.alert('Unable to open app', error instanceof Error ? error.message : 'The selected app could not be opened.'); } finally { setLockTriggeredBySystem(false); setLockedApp(null); } }} onClose={() => { void clearSessionUnlock(); if (lockTriggeredBySystem || lockedApp.packageName === SELF_PACKAGE) void dismissLockOverlay(); setLockTriggeredBySystem(false); setLockedApp(null); }} />;
+  if (lockedApp) return <LockScreen app={lockedApp.packageName === SELF_PACKAGE ? selfAppItem : lockedApp} method={method} themeColors={themeColors} backgroundColor={accentPalette.bg} onColor={accentPalette.on} wallpaperUri={commonWallpaper ?? undefined} onUnlock={async () => { if (lockedApp.packageName === SELF_PACKAGE) { selfLockSatisfiedRef.current = true; setLockedApp(null); return; } try { await openProtectedApp(lockedApp.packageName); } catch (error) { Alert.alert('Unable to open app', error instanceof Error ? error.message : 'The selected app could not be opened.'); } finally { setLockTriggeredBySystem(false); setLockedApp(null); } }} onClose={() => { void clearSessionUnlock(); if (lockTriggeredBySystem || lockedApp.packageName === SELF_PACKAGE) void dismissLockOverlay(); setLockTriggeredBySystem(false); setLockedApp(null); }} />;
 
   return <SafeAreaView style={[styles.safe, { backgroundColor: appBackgroundColor }]}><StatusBar barStyle={theme === 'Light' ? 'dark-content' : 'light-content'} backgroundColor={appBackgroundColor} />
     <View style={{ flex: 1, backgroundColor: appContentColor }}>
